@@ -1,0 +1,724 @@
+---
+title: "Supplementary Information"
+output: pdf_document
+---
+
+```{r setup, include=FALSE, message=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+library(bayesplot)
+library(cmdstanr)
+library(dplyr)
+library(GGally)
+library(ggplot2)
+library(ggpubr)
+library(ggridges)
+library(gridExtra)
+library(lubridate)
+library(Metrics)
+library(patchwork)
+library(purrr)
+library(readr)
+library(readsdr)
+library(rstan)
+library(scales)
+library(stringr)
+library(tidyr)
+
+source("./R/helpers.R")
+source("./R/plots.R")
+filepath <- "./models/SEIR.stmx"
+```
+
+# Data
+
+```{r, fig.height = 3.5}
+flu_data <- read_csv("./data/Cumberland_data_1918.csv") %>% 
+  rename(time = Time, y = Cases) %>% 
+  mutate(Date = dmy(Date),
+         Week = epiweek(Date))
+
+g <- ggplot(flu_data, aes(x = Date, y = y)) +
+  geom_col(fill = "steelblue") +
+  theme_pubclean() +
+  labs(x = "Time (days)",
+       y = "Incidence (People per day)")
+
+print(g)
+
+ggsave("./plots/A_incidence_report.pdf", plot = g, dpi = "print", height = 5, 
+       width = 8)
+```
+```{r, fig.height = 3.5}
+weekly_data <- flu_data %>% group_by(Week) %>% 
+  summarise(y = sum(y)) %>% 
+  rename(time = Week) %>% 
+  mutate(time = time - min(time) + 1)
+
+ggplot(weekly_data, aes(x = time, y = y)) +
+  geom_col(fill = "slategray3") +
+  theme_pubclean() +
+  labs(title = "Weekly incidence")
+```
+
+# Calibration
+
+## Prior information - $\pi(\theta)$
+
+* $\gamma$ = 1 / 2 
+* $\sigma$ = 1 / 2 
+* $R^0$ = 0
+* $E^0$ = 0
+* $S^0$ = 5234 - $I^0$
+* $I^0 \sim lognormal(0, 1)$
+* $\beta \sim lognormal(0, 1)$
+* $\rho \sim beta(2, 2)$
+
+```{r}
+set.seed(2021)
+
+g1 <- ggplot(NULL, aes(c(0, 10))) + 
+  geom_area(stat = "function", fun = dlnorm, fill = "grey95", 
+            colour = "grey60") +
+  scale_x_continuous(breaks = c(0, 5, 10)) +
+  theme_pubr() +
+  labs(y = "Probability density",
+       x = bquote(beta)) +
+  theme(axis.line.y = element_blank(),
+        axis.ticks = element_blank(),
+        axis.text.y = element_blank())
+
+kappa_dens <- rbeta(5e4, 2, 2)
+kappa_df   <- data.frame(x =  kappa_dens)
+
+g2   <- ggplot(NULL, aes(c(0, 1))) + 
+   geom_area(stat = "function", fun = dbeta, fill = "grey95", 
+            colour = "grey60", args = list(shape1 = 2, shape2 = 2)) +  
+  scale_x_continuous(breaks = c(0, 0.5, 1)) +
+  theme_pubr() +
+  labs(y = "",
+       x = bquote(kappa)) +
+  theme(axis.line.y = element_blank(),
+        axis.ticks = element_blank(),
+        axis.text.y = element_blank())
+
+g3   <- g1 + labs(y = "",
+       x = "I(0)",
+       title = "")
+
+g <- g1 + g2 + g3 
+
+print(g)
+
+ggsave("./plots/A_prior_dist.pdf", dpi = "print", height = 5, width = 8)
+```
+
+```{r}
+set.seed(300194)
+
+pop_size   <- 5234
+const_list <- list(N = pop_size, sigma = 0.5, par_gamma = 0.5)
+mdl        <- read_xmile(filepath, const_list = const_list)
+
+n_sims     <- 500
+I_0_sims   <- rlnorm(n_sims, 0, 1)
+rho_sims   <- rbeta(n_sims, 2, 2)
+beta_sims  <- rlnorm(n_sims, 0, 1) 
+
+consts_df  <- data.frame(par_beta  = beta_sims,
+                         rho       = rho_sims)
+R0         <- round(5234 * 0.3, 0)  # Initial value for the recovered stock
+stocks_df  <- data.frame(S = pop_size - R0 - I_0_sims,
+                         I = I_0_sims,
+                         C = I_0_sims)
+
+sens_o <- sd_sensitivity_run(mdl$deSolve_components, start_time = 0, 
+                             stop_time = 91, timestep = 1 / 32,
+                             multicore = TRUE, n_cores = 4, 
+                             integ_method = "rk4", stocks_df = stocks_df,
+                             consts_df = consts_df)
+
+sens_inc <- map_df(1:n_sims, function(index, sim_df) {
+  sim_df <- filter(sim_df, iter == index)
+  construct_incidence(sim_df) %>% mutate(iter = index)
+}, sim_df = sens_o)
+```
+
+```{r}
+g <- ggplot(sens_inc, aes(x = time, y = y)) +
+  geom_line(aes(group = iter), alpha = 0.1, colour = "grey50") +
+  geom_point(data = flu_data, aes(x = time, y = y), size = 0.5, 
+             colour = "steelblue") +
+  theme_pubclean() +
+  labs(title = "Prior predictive checks",
+       y     = "Incidence [People / day]",
+       x     = "Days")
+
+print(g)
+
+ggsave("./plots/A_prior_predictive_checks.pdf", dpi = "print", height = 5, 
+       width = 8)
+```
+
+```{r}
+max_y_df    <- sens_inc %>% group_by(iter) %>% summarise(max_y = max(y))
+filtered_df <- filter(max_y_df, max_y < 200)
+iters       <- filtered_df$iter
+
+sens_inc2 <- filter(sens_inc, iter %in% iters)
+
+ggplot(sens_inc2, aes(x = time, y = y)) +
+  geom_line(aes(group = iter), alpha = 0.1, colour = "grey50") +
+  geom_point(data = flu_data, aes(x = time, y = y), size = 0.5, 
+             colour = "steelblue") +
+  theme_pubclean()
+```
+
+# Calibration
+
+```{r}
+pars_hat  <- c("I0", "rho", "beta")
+gamma     <- 0.5
+sigma     <- 0.5
+consts    <- sd_constants(mdl)
+ODE_fn    <- "SEIR"
+stan_fun  <- stan_ode_function(filepath, ODE_fn, pars = consts$name[c(2, 1)], 
+                               const_list = list(N = pop_size, par_gamma = gamma,
+                                                 sigma = sigma))
+
+fun_exe_line <- str_glue("  o = ode_rk45({ODE_fn}, y0, t0, ts, params);") 
+```
+
+## Normal 
+
+```{r}
+stan_data <- stan_data("y", type = "real", inits = FALSE)
+
+stan_params <- paste(
+  "parameters {",
+  "  real<lower = 0>            beta;",
+  "  real<lower = 0, upper = 1> rho;",
+  "  real<lower = 0> s;",
+  "  real<lower = 0> I0;",
+"}", sep = "\n")
+
+stan_tp <- paste(
+  "transformed parameters{",
+  "  vector[n_difeq] o[n_obs]; // Output from the ODE solver",
+  "  real y_hat[n_obs];",
+  "  vector[n_difeq] y0;",
+  "  real params[n_params];",
+  "  y0[1] = 3664 - I0;",
+  "  y0[2] = 0;",
+  "  y0[3] = I0;",
+  "  y0[4] = 1570;",
+  "  y0[5] = I0;",
+  "  params[1] = beta;",
+  "  params[2] = rho;",
+  fun_exe_line,
+  "  y_hat[1] =  o[1, 5]  - y0[5];",
+  "  for (i in 1:n_obs-1) {",
+  "    y_hat[i + 1] = o[i + 1, 5] - o[i, 5] + 1e-5;",
+  "  }",
+  "}", sep = "\n")
+
+stan_model <- paste(
+  "model {",
+  "  rho   ~ beta(2, 2);",
+  "  beta  ~ lognormal(0, 1);",
+  "  I0    ~ lognormal(0, 1);",
+  "  s     ~ cauchy(0, 2);",
+  "  y     ~ normal(y_hat, s);", 
+  "}",
+  sep = "\n")
+
+stan_text   <- paste(stan_fun, stan_data, stan_params,
+                       stan_tp, stan_model, sep = "\n")
+
+stan_filepath <- "./Stan_files/example/flu_normal.stan"
+
+create_stan_file(stan_text, stan_filepath)
+```
+
+```{r fit_norm, results = 'hide'}
+stan_d <- list(n_obs    = nrow(flu_data),
+               y        = flu_data$y,
+               n_params = 2,
+               n_difeq  = 5,
+               t0       = 0,
+               ts       = 1:length(flu_data$y))
+
+set_cmdstan_path(file.path(Sys.getenv("HOME"), ".cmdstanr", 
+                           "cmdstan-2.24.0-rc1"))
+
+mod <- cmdstan_model(stan_filepath)
+
+fit <- mod$sample(data            = stan_d,
+                  seed            = 553615,
+                  chains          = 4,
+                  parallel_chains = 4,
+                  iter_warmup     = 1000,
+                  iter_sampling   = 1000,
+                  refresh         = 5,
+                  save_warmup     = TRUE)
+
+sf_normal <- rstan::read_stan_csv(fit$output_files())
+```
+
+```{r}
+a <- trace_plot(sf_normal, n_samples = 100, "A)") +
+  theme(axis.text = element_text(size = 5))
+
+b <- trace_plot(sf_normal, subtitle = "B)") +
+  theme(axis.text = element_text(size = 5))
+
+ggsave("./plots/A_traceplot.pdf",plot = a + b, dpi = "print", height = 3, 
+       width = 8)
+
+print(a + b)
+```
+
+
+
+```{r}
+posterior_df <- as.data.frame(sf_normal)
+
+samples_normal <- posterior_df[ , pars_hat] %>% 
+  mutate(R0 = beta / gamma, ll = "Normal")
+
+y_hat_df_norm <- extract_timeseries_var("y_hat", posterior_df)
+
+summary_df <- y_hat_df_norm  %>% group_by(time) %>% 
+  summarise(lb = quantile(value, c(0.025, 0.975)[[1]]),
+            ub = quantile(value, c(0.025, 0.975)[[2]]),
+            y  = mean(value))
+```
+
+
+```{r}
+pars_df <- posterior_df[, c("beta", "rho", "I0")]
+
+g <- prior_posterior_plot(pars_df)
+
+print(g)
+
+ggsave("./plots/A_prior_pos_comparison.pdf",plot = g, dpi = "print", 
+       height = 4, 
+       width = 8)
+```
+
+```{r}
+g <- pairs_posterior(pars_df)
+
+print(g)
+
+ggsave("./plots/A_pairs_plot.pdf", plot = g, dpi = "print", height = 4, 
+       width = 8)
+```
+
+
+```{r}
+ggplot(summary_df, aes(x = time , y)) +
+geom_ribbon(aes(ymin = lb, ymax = ub), fill = "grey90") +
+  geom_line(colour = "steelblue") +
+  geom_point(data = flu_data) +
+  theme_pubclean()
+```
+```{r}
+
+weekly_sum <- y_hat_df_norm %>% mutate(week = time %/% 7 + 1) %>% 
+  group_by(iter, week) %>% 
+  summarise(.groups = "drop", value = sum(value)) %>% 
+  group_by(week) %>% 
+  summarise(lb = quantile(value, c(0.025, 0.975)[[1]]),
+            ub = quantile(value, c(0.025, 0.975)[[2]]),
+            y  = mean(value)) %>% 
+  rename(time = week)
+
+ggplot(weekly_sum, aes(x = time, y = y)) +
+  geom_ribbon(aes(ymin = lb, ymax = ub), fill = "grey90") +
+  geom_line(colour = "steelblue") +
+  geom_point(data = weekly_data) +
+  theme_pubclean()
+```
+
+```{r}
+set.seed(1800)
+row_ids <- sample.int(nrow(pars_df), 500, replace = TRUE)
+
+post_samples <- pars_df[row_ids, ]
+
+consts_df <- dplyr::select(post_samples, beta, rho) %>% 
+  rename(par_beta = beta)
+
+stocks_df <- dplyr::select(post_samples, I0) %>% 
+  rename(I = I0) %>% 
+  mutate(S = pop_size - I - R0,
+         R = R0,
+         C = I)
+
+sens_o <- sd_sensitivity_run(mdl$deSolve_components, start_time = 0, 
+                             stop_time = 91, timestep = 1 / 32,
+                             multicore = TRUE, n_cores = 4, 
+                             integ_method = "rk4", stocks_df = stocks_df,
+                             consts_df = consts_df)
+
+# Posterior predictive checks
+ppc <- map_df(1:n_sims, function(index, sim_df) {
+  sim_df <- filter(sim_df, iter == index)
+  construct_incidence(sim_df) %>% mutate(iter = index)
+}, sim_df = sens_o)
+
+```
+
+```{r}
+expected_value <- ppc %>% group_by(time) %>% 
+  summarise(y = mean(y))
+
+g1 <- ggplot(ppc, aes(x = time, y = y)) +
+  geom_line(aes(group = iter), alpha = 0.1, colour = "grey50") +
+  geom_point(data = flu_data, aes(x = time, y = y), size = 0.5,
+            colour = "steelblue") +
+  geom_line(data = expected_value, colour = "black", linetype = "dashed") +
+  theme_pubclean() +
+  labs(subtitle = "A)",
+       y     = "Incidence [People / day]",
+       x     = "Days")
+
+print(g1)
+```
+
+```{r}
+df_list <- split(ppc, f = ppc$iter)
+mases   <- sapply(df_list, function(df) mase(flu_data$y, df$y))
+MASE_df <- data.frame(MASE = mases)
+
+
+g2 <- ggplot(MASE_df, aes(x = MASE)) +
+  geom_density(fill = "grey95") +
+  scale_x_continuous(limits = c(0.60, 1)) +
+  geom_vline(xintercept = 1, linetype = "dotted") +
+  theme_pubr() +
+  labs(subtitle = "B)",
+       y = "Density") +
+  theme(axis.line.y = element_blank(),
+        axis.ticks = element_blank(),
+        axis.text.y = element_blank())
+
+print(g2)
+
+ggsave("./plots/A_ppc.pdf", plot = g1 / g2, dpi = "print", height = 5, 
+       width = 8)
+
+```
+
+# Forecast
+
+```{r}
+source("./R/incidence_comparison.R")
+
+total_pop    <- 10000
+pars_df2     <- mutate(pars_df, beta = beta * 0.6)
+
+set.seed(12)
+
+unm_inc <- incidence_comparison(pars_df, total_pop) %>% 
+  mutate(Scenario = "Unmitigated")
+
+itv_inc <- incidence_comparison(pars_df2, total_pop) %>% 
+  mutate(Scenario = "Intervention")
+
+inc_df <- bind_rows(unm_inc, itv_inc) %>% 
+  mutate(Scenario = factor(Scenario, levels = c("Unmitigated" ,"Intervention")))
+```
+
+```{r}
+ggplot(inc_df, aes(x = time, y = y)) +
+  geom_line(colour = "grey75", aes(group = iter), alpha = 0.3) +
+  facet_grid(Scenario ~ Case) +
+  theme_pubclean() +
+  labs(title = "Incidence by scenario",
+       y     = "Incidence [People / day]",
+       x     = "Days")
+
+ggsave("./plots/A_prediction.pdf", dpi = "print", height = 5, 
+       width = 8)
+```
+
+
+## Negative binomial
+
+```{r}
+stan_data <- stan_data("y", "int", inits = FALSE)
+
+stan_params <- paste(
+  "parameters {",
+  "  real<lower = 0>            beta;",
+  "  real<lower = 0, upper = 1> rho;",
+  "  real<lower = 0> reciprocal_phi;",
+  "  real<lower = 0> I0;",
+"}", sep = "\n")
+
+fun_exe_line <- str_glue("  o = ode_rk45({ODE_fn}, y0, t0, ts, params);") 
+
+stan_tp <- paste(
+  "transformed parameters{",
+  "  vector[n_difeq] o[n_obs]; // Output from the ODE solver",
+  "  real y_hat[n_obs];",
+  "  vector[n_difeq] y0;",
+  "  real params[n_params];",
+  "  real phi;",
+  "  y0[1] = 3664 - I0;",
+  "  y0[2] = 0;",
+  "  y0[3] = I0;",
+  "  y0[4] = 1570;",
+  "  y0[5] = I0;",
+  "  params[1] = beta;",
+  "  params[2] = rho;",
+  fun_exe_line,
+  "  y_hat[1] =  o[1, 5]  - y0[5];",
+  "  for (i in 1:n_obs-1) {",
+  "    y_hat[i + 1] = o[i + 1, 5] - o[i, 5] + 1e-5;",
+  "  }",
+  " phi = 1 / reciprocal_phi;",
+  "}", sep = "\n")
+
+stan_model <- paste(
+  "model {",
+  "  rho ~ beta(2, 2);",
+  "  beta  ~ lognormal(0, 1);",
+  "  I0    ~ lognormal(0, 1);",
+  "  reciprocal_phi ~ normal(0, 1);",
+  "  y     ~ neg_binomial_2(y_hat, phi);", 
+  "}",
+  sep = "\n")
+
+stan_text   <- paste(stan_fun, stan_data, stan_params,
+                       stan_tp, stan_model, sep = "\n")
+
+stan_filepath <- "./Stan_files/example/flu_neg_binom.stan"
+
+create_stan_file(stan_text, stan_filepath)
+```
+ 
+```{r fit_nbinom, results = 'hide'}
+stan_d <- list(n_obs    = nrow(flu_data),
+               y        = flu_data$y,
+               n_params = 2,
+               n_difeq  = 5,
+               t0       = 0,
+               ts       = 1:length(flu_data$y))
+
+set_cmdstan_path(file.path(Sys.getenv("HOME"), ".cmdstanr", 
+                           "cmdstan-2.24.0-rc1"))
+
+mod <- cmdstan_model(stan_filepath)
+
+fit <- mod$sample(data            = stan_d,
+                  seed            = 24157,
+                  chains          = 4,
+                  parallel_chains = 4,
+                  iter_warmup     = 1000,
+                  iter_sampling   = 1000,
+                  refresh         = 5,
+                  save_warmup     = TRUE)
+
+sf_nb <- rstan::read_stan_csv(fit$output_files())
+```
+
+```{r}
+posterior_df <- as.data.frame(sf_nb)
+
+samples_nb <- posterior_df[ , pars_hat] %>% 
+  mutate(R0 = beta / gamma, ll = "Nbinom")
+
+y_hat_df_nbinom <- extract_timeseries_var("y_hat", posterior_df)
+
+summary_df <- y_hat_df_nbinom %>% group_by(time) %>% 
+  summarise(lb = quantile(value, c(0.025, 0.975)[[1]]),
+            ub = quantile(value, c(0.025, 0.975)[[2]]),
+            y  = mean(value))
+```
+
+```{r}
+ggplot(summary_df, aes(x = time , y)) +
+geom_ribbon(aes(ymin = lb, ymax = ub), fill = "grey90") +
+  geom_line(colour = "steelblue") +
+  geom_point(data = flu_data) +
+  theme_pubclean()
+```
+
+
+```{r}
+
+weekly_sum <- y_hat_df_nbinom %>% mutate(week = time %/% 7 + 1) %>% 
+  group_by(iter, week) %>% 
+  summarise(.groups = "drop", value = sum(value)) %>% 
+  group_by(week) %>% 
+  summarise(lb = quantile(value, c(0.025, 0.975)[[1]]),
+            ub = quantile(value, c(0.025, 0.975)[[2]]),
+            y  = mean(value)) %>% 
+  rename(time = week)
+
+ggplot(weekly_sum, aes(x = time, y = y)) +
+  geom_ribbon(aes(ymin = lb, ymax = ub), fill = "grey90") +
+  geom_line(colour = "steelblue") +
+  geom_point(data = weekly_data) +
+  theme_pubclean()
+```
+
+## Poisson likelihood
+
+```{r}
+consts    <- sd_constants(mdl)
+ODE_fn    <- "SEIR"
+stan_fun  <- stan_ode_function(filepath, ODE_fn, pars = consts$name[c(1, 6)], 
+                               const_list = list(N = 5234, par_gamma = 0.5,
+                                                 sigma = 0.5))
+stan_data <- stan_data("y", "int", inits = FALSE)
+
+stan_params <- paste(
+  "parameters {",
+  "  real<lower = 0>            beta;",
+  "  real<lower = 0, upper = 1> rho;",
+  "  real<lower = 0> I0;",
+"}", sep = "\n")
+
+fun_exe_line <- str_glue("  o = ode_rk45({ODE_fn}, y0, t0, ts, params);") 
+
+stan_tp <- paste(
+  "transformed parameters{",
+  "  vector[n_difeq] o[n_obs]; // Output from the ODE solver",
+  "  real y_hat[n_obs];",
+  "  vector[n_difeq] y0;",
+  "  real params[n_params];",
+  "  y0[1] = 3664 - I0;",
+  "  y0[2] = 0;",
+  "  y0[3] = I0;",
+  "  y0[4] = 1570;",
+  "  y0[5] = I0;",
+  "  params[1] = beta;",
+  "  params[2] = rho;",
+  fun_exe_line,
+  "  y_hat[1] =  o[1, 5]  - y0[5];",
+  "  for (i in 1:n_obs-1) {",
+  "    y_hat[i + 1] = o[i + 1, 5] - o[i, 5] + 1e-5;",
+  "  }",
+  "}", sep = "\n")
+
+stan_model <- paste(
+  "model {",
+  "  rho ~ beta(2, 2);",
+  "  beta  ~ lognormal(0, 1);",
+  "  I0    ~ lognormal(0, 1);",
+  "  y     ~ poisson(y_hat);", 
+  "}",
+  sep = "\n")
+
+stan_text   <- paste(stan_fun, stan_data, stan_params,
+                       stan_tp, stan_model, sep = "\n")
+
+stan_filepath <- "./Stan_files/example/flu_poisson.stan"
+
+create_stan_file(stan_text, stan_filepath)
+```
+
+```{r fit_pois, results = 'hide'}
+stan_d <- list(n_obs    = nrow(flu_data),
+               y        = flu_data$y,
+               n_params = 2,
+               n_difeq  = 5,
+               t0       = 0,
+               ts       = 1:length(flu_data$y))
+
+set_cmdstan_path(file.path(Sys.getenv("HOME"), ".cmdstanr", 
+                           "cmdstan-2.24.0-rc1"))
+
+mod <- cmdstan_model(stan_filepath)
+
+fit <- mod$sample(data            = stan_d,
+                  seed            = 906024,
+                  chains          = 4,
+                  parallel_chains = 4,
+                  iter_warmup     = 1000,
+                  iter_sampling   = 1000,
+                  refresh         = 5,
+                  save_warmup     = TRUE)
+
+sf_pois <- rstan::read_stan_csv(fit$output_files())
+```
+
+```{r pois_samples}
+posterior_df <- as.data.frame(sf_pois)
+
+samples_pois <- posterior_df[ , pars_hat] %>% 
+  mutate(R0 = beta / gamma, ll = "Pois")
+
+y_hat_df_pois <- extract_timeseries_var("y_hat", posterior_df)
+
+summary_df <- y_hat_df_pois %>% group_by(time) %>% 
+  summarise(lb = quantile(value, c(0.025, 0.975)[[1]]),
+            ub = quantile(value, c(0.025, 0.975)[[2]]),
+            y  = mean(value))
+```
+
+```{r}
+ggplot(summary_df, aes(x = time , y)) +
+geom_ribbon(aes(ymin = lb, ymax = ub), fill = "grey90") +
+  geom_line(colour = "steelblue") +
+  geom_point(data = flu_data) +
+  theme_pubclean()
+```
+
+```{r}
+
+weekly_sum <- y_hat_df_pois %>% mutate(week = time %/% 7 + 1) %>% 
+  group_by(iter, week) %>% 
+  summarise(.groups = "drop", value = sum(value)) %>% 
+  group_by(week) %>% 
+  summarise(lb = quantile(value, c(0.025, 0.975)[[1]]),
+            ub = quantile(value, c(0.025, 0.975)[[2]]),
+            y  = mean(value)) %>% 
+  rename(time = week)
+
+ggplot(weekly_sum, aes(x = time, y = y)) +
+  geom_ribbon(aes(ymin = lb, ymax = ub), fill = "grey90") +
+  geom_line(colour = "steelblue") +
+  geom_point(data = weekly_data) +
+  theme_pubclean()
+```
+
+# Goodness of fit
+
+```{r}
+
+y_hat_list <- list(pois   = y_hat_df_pois,
+                   norm   = y_hat_df_norm,
+                   nbinom = y_hat_df_nbinom)
+
+MASE_df <- imap_dfr(y_hat_list, function(y_hat, lbl) {
+  df_list <- split(y_hat, f = y_hat$iter)
+  mases   <- sapply(df_list, function(df) mase(flu_data$y, df$value))
+  data.frame(MASE = mases, ll = lbl)
+})
+
+ggplot(MASE_df, aes(x = MASE, y = ll)) +
+  geom_density_ridges() +
+  theme_pubr()
+
+
+```
+
+
+# Summary of estimates
+
+```{r}
+samples_pars <- bind_rows(samples_nb, samples_pois, samples_normal) %>% 
+  pivot_longer(-ll, names_to = "par", values_to = "value")
+
+ggplot(samples_pars, aes(x = ll, y = value)) +
+  geom_boxplot(outlier.colour = "grey80") +
+  facet_wrap(~par, scales = "free") +
+  theme_pubr()
+  
+```
+
