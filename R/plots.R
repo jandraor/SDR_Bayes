@@ -1,3 +1,12 @@
+plot_daily_incidence <- function(flu_data){
+  ggplot(flu_data, aes(x = Date, y = y)) +
+    geom_col(fill = "steelblue") +
+    theme_pubclean() +
+    labs(x = "Time (days)",
+         y = "Incidence (People per day)")
+}
+
+
 # ===================Pairs======================================================
 
 dens_fn <- function(data, mapping, ...){
@@ -103,7 +112,7 @@ prior_posterior_plot <- function(pars_df) {
   g3 <- base + geom_function(fun = dlnorm, args = list(meanlog = 0, sdlog = 1),
                        colour = "grey50") +
     theme_pubr() +
-    labs(x = bquote(I^0), y = "") +
+    labs(x = "I(0)", y = "") +
     theme(axis.text.y = element_blank(),
           axis.ticks.y = element_blank(),
           axis.line.y = element_blank())

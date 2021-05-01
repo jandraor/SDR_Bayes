@@ -1,0 +1,341 @@
+---
+title: "S2 Appendix"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE)
+
+library(bayesplot)
+library(cmdstanr)
+library(dplyr)
+library(ggplot2)
+library(ggpubr)
+library(lubridate)
+library(MCMCpack)
+library(parallel)
+library(patchwork)
+library(purrr)
+library(stringr)
+library(readsdr)
+library(readr)
+library(rstan)
+library(tictoc)
+library(tidybayes)
+library(tidyr)
+```
+
+# Data
+
+```{r, fig.height = 3.5}
+source("./R/plots.R")
+
+flu_data <- read_csv("./data/Cumberland_data_1918.csv") %>% 
+  rename(time = Time, y = Cases) %>% 
+  mutate(Date = dmy(Date),
+         Week = epiweek(Date))
+
+
+plot_daily_incidence(flu_data)
+```
+
+
+# Performance comparison
+
+```{r}
+source("./R/posterior_components.R")
+
+pop_size           <- 5234
+const_list         <- list(N = pop_size, sigma = 0.5, par_gamma = 0.5)
+stock_list         <- list(R = 1570)
+filepath           <- "./models/SEIR.stmx"
+mdl                <- read_xmile(filepath, 
+                                 const_list = const_list,
+                                 stock_list = stock_list)
+
+deSolve_components <- mdl$deSolve_components
+loglik             <- generate_loglik_fun(mdl$deSolve_components, flu_data$y)
+
+posterior_fun <- function(pars) loglik(pars) + logprior(pars) 
+
+set.seed(3001141)
+inits_I    <- runif(4, -2, 2)
+inits_beta <- runif(4, -2, 2)
+inits_rho  <- runif(4, -2, 2)
+```
+
+```{r, message = TRUE}
+n_iters <- c(1e2, 2e2, 5e2, 1e3, 1.5e3, 2e3)
+seeds   <- c(409198311,87064581, 696684459, 817963518, 411110113, 897071894)
+
+map2(n_iters, seeds, function(n_iter, seed) {
+  
+  fn <- str_glue("./backup_objs/Comparison/MCMC_RWM/{n_iter}.rds")
+  
+  if(!file.exists(fn)) {
+    
+    message(str_glue("Starting process for {n_iter} samples"))
+    
+    
+    tic.clearlog()
+    tic()
+  
+    mclapply(1:4, function(i) {
+      
+      inits     <- c(inits_I[[i]], inits_beta[[i]], inits_rho[[i]])
+      
+      MCMCmetrop1R(fun = posterior_fun,
+                   theta.init = c(inits),
+                   mcmc       = n_iter, 
+                   burnin     = n_iter,
+                   seed       = seed)-> mcmc_output
+  
+      posterior_df <- as.data.frame(mcmc_output) %>%
+        set_names(c("I0", "beta", "rho")) %>% 
+        mutate(I0   = exp(I0),
+               beta  = exp(beta),
+               rho   = expit(rho),
+               Chain = i)
+    }, mc.cores = 4) -> post_obj
+  
+    toc(quiet = FALSE, log = TRUE)
+    
+    log.lst <- tic.log(format = FALSE)
+      
+    result_obj <- list(post_obj     = post_obj,
+                       time         = log.lst)
+  
+    saveRDS(result_obj, fn)
+  } else {
+    result_obj <- readRDS(fn)
+  }
+  
+  result_obj
+}) -> full_results
+```
+
+```{r}
+unk_pars <- c("I0", "beta", "rho") # Unknown parameters
+posterior_list <- map(full_results, "post_obj") %>% 
+  map(function(pos_obj) {
+    do.call("bind_rows", pos_obj)
+  })
+
+names(posterior_list) <- n_iters
+
+map(posterior_list, function(posterior_df) {
+  mcmc_trace(posterior_df, pars = unk_pars,
+             facet_args = list(labeller = label_parsed)) +
+    labs(title = "RWM")
+}) -> rwm_traces
+```
+
+```{r}
+stan_filepath <- "./Stan_files/example/flu_poisson.stan"
+
+n_iters <- c(1e2, 2e2, 5e2, 1e3, 1.5e3, 2e3)
+seeds   <- c(409198311,87064581, 696684459, 817963518, 411110113, 897071894)
+
+map2(n_iters, seeds, function(n_iter, seed) {
+  file_path <- str_glue("./backup_objs/Comparison/MCMC_HMC/{n_iter}.rds")
+
+  if(!file.exists(file_path)) {
+    
+    tic.clearlog()
+    tic()
+    
+    stan_d <- list(n_obs    = nrow(flu_data),
+                   y        = flu_data$y,
+                   n_params = 2,
+                   n_difeq  = 5,
+                   t0       = 0,
+                   ts       = 1:length(flu_data$y))
+
+    mod <- cmdstan_model(stan_filepath)
+
+    fit <- mod$sample(data            = stan_d,
+                      seed            = seed,
+                      chains          = 4,
+                      parallel_chains = 4,
+                      iter_warmup     = n_iter,
+                      iter_sampling   = n_iter,
+                      refresh         = 5,
+                      save_warmup     = FALSE)
+
+    sf <- rstan::read_stan_csv(fit$output_files())
+    
+        toc(quiet = FALSE, log = TRUE)
+    
+    log.lst <- tic.log(format = FALSE)
+    
+    result_obj <- list(sf = sf, time = log.lst) 
+    saveRDS(result_obj, file_path)
+    
+  } else {
+    result_obj <- readRDS(file_path)
+  }
+  
+  result_obj
+}) -> HMC_sens
+```
+
+```{r}
+sf_objs        <- map(HMC_sens,  "sf")
+names(sf_objs) <- n_iters
+```
+
+```{r}
+map(sf_objs, function(sf_obj) {
+  mcmc_trace(sf_obj, pars = unk_pars,
+             facet_args = list(labeller = label_parsed)) +
+    labs(title = "HMC")
+}) -> HMC_traces
+```
+
+## Trace plots
+
+These trace plots present the number of samples in the *sampling phase*. We
+allocate an equal number of samples for the *burn-in/warm-up* and *sampling* 
+phases. In the first case presented below, this implies that the MCMC samplers
+return 200 samples per chain (100 for burn-in/warm-up and 100 for sampling).
+Therefore, 400 samples (4 chains * 100 samples from the sampling phase) 
+describe the target (posterior) distribution.
+
+### 100 samples
+
+```{r, fig.height = 3.5}
+rwm_traces[[1]] / HMC_traces[[1]]
+```
+
+### 200 samples
+
+```{r, fig.height = 3.5}
+rwm_traces[[2]] / HMC_traces[[2]]
+```
+
+### 500 samples
+
+```{r, fig.height = 3.5}
+rwm_traces[[3]] / HMC_traces[[3]]
+```
+
+
+### 1000 samples
+
+```{r, fig.height = 3.5}
+rwm_traces[[4]] / HMC_traces[[4]]
+```
+
+### 1500 samples
+
+```{r, fig.align = 3.5}
+rwm_traces[[5]] / HMC_traces[[5]]
+```
+
+
+### 2000 samples
+
+```{r, fig.height = 3.5}
+rwm_traces[[6]] / HMC_traces[[6]]
+```
+
+## R-hat
+
+```{r rhat_RWM}
+imap_dfr(posterior_list, function(df, n_iter) {
+  
+  map_df(unk_pars, function(par) {
+    
+    dplyr::select(df, par, Chain) %>% 
+      mutate(id = rep(1:(n_iter), 4)) %>% 
+      pivot_wider(names_from = "Chain", values_from = !!ensym(par)) %>% 
+      dplyr::select(-id) %>% 
+      as.matrix() -> chain_matrix
+    
+      data.frame(par      = par, 
+                   rhat     = Rhat(chain_matrix),
+                   ess_bulk = ess_bulk(chain_matrix),
+                   ess_tail = ess_tail(chain_matrix),
+                   n_iter   = n_iter)
+  })
+}) %>% mutate(method = "RWM") -> diag_RWM
+```
+
+```{r rhat_HMC}
+imap_dfr(sf_objs, function(stan_object, n_iter) {
+  
+    map_dfr(unk_pars, function(par) {
+      
+      stan_object %>% 
+        spread_draws(!!ensym(par)) %>% 
+        dplyr::select(-.draw) %>% 
+        pivot_wider(names_from = ".chain", 
+                    values_from = !!ensym(par)) %>% 
+        dplyr::select(-.iteration) %>% 
+        as.matrix() -> chain_matrix
+      
+      data.frame(par      = par, 
+                   rhat     = Rhat(chain_matrix),
+                   ess_bulk = ess_bulk(chain_matrix),
+                   ess_tail = ess_tail(chain_matrix),
+                   n_iter   = n_iter)
+    })
+}) %>% mutate(method = "HMC") -> diag_HMC
+```
+
+
+```{r, fig.height = 3.5}
+diag_df <- bind_rows(diag_RWM, diag_HMC) %>% 
+  mutate(par = ifelse(par == "I0", "I(0)", par))
+
+ggplot(diag_df, aes(x = as.numeric(n_iter), y = rhat)) +
+  geom_point(aes(colour = method)) +
+  geom_line(aes(group = method, colour = method), alpha = 0.5) +
+  scale_colour_manual(values = c("#077893", "#FF9465")) +
+  facet_wrap(~par, labeller = label_parsed) +
+  labs(x = "# iters") + 
+  theme_pubclean()
+```
+
+## Effective Sample Size
+
+```{r, fig.height = 3.5}
+diag_df %>% dplyr::select(-rhat) %>% 
+  pivot_longer(c(-par, -n_iter, -method)) -> ess_df
+
+ggplot(ess_df, aes(x = as.numeric(n_iter), y = value)) +
+  geom_point(aes(shape = method, colour = method), alpha = 0.75, size = 2.5) +
+  scale_y_log10() +
+  scale_colour_manual(values = c("#077893", "#FF9465")) +
+  facet_grid(name ~ par, labeller = label_parsed) +
+  geom_hline(yintercept = 100, colour = "red", linetype = "dashed") +
+  labs(x = "# iters", y = "ESS (log scale)") +
+  theme_bw()
+```
+
+## Computational time
+
+```{r}
+source("./R/helpers.R")
+
+comp_times <- map_dbl(full_results, 
+                      function(pos_obj) calculate_time(pos_obj$time))
+
+cp_RWM <- data.frame(n_iter = n_iters, time = comp_times, method = "RWM")
+
+comp_times <- map_dbl(HMC_sens, function(pos_obj) calculate_time(pos_obj$time))
+
+cp_HMC     <- data.frame(n_iter = n_iters, time = comp_times, method = "HMC")
+
+cp_df <- bind_rows(cp_RWM, cp_HMC)
+```
+
+
+```{r}
+ggplot(cp_df, aes(x = n_iter, y = time)) +
+  geom_point(aes(shape = method, colour = method), size = 4) +
+  scale_colour_manual(values = c("#077893", "#FF9465")) +
+  theme_pubclean() +
+  labs(y = "Elapsed time [Minutes]", x = "# iters")
+```
+
