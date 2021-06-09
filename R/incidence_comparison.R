@@ -19,7 +19,7 @@ incidence_comparison <- function(pars_df, total_pop){
   split_df <- split(cor_out, cor_out$iter)
   
   cor_inc <- imap_dfr(split_df, function(df, lbl) {
-    construct_incidence(df) %>% mutate(iter = lbl)
+    construct_incidence(df, "pois") %>% mutate(iter = lbl)
   }) %>% 
     mutate(Case = "Correlated parameters")
   
@@ -48,7 +48,7 @@ incidence_comparison <- function(pars_df, total_pop){
   split_df <- split(ind_out, ind_out$iter)
   
   ind_inc <- imap_dfr(split_df, function(df, lbl) {
-    construct_incidence(df) %>% mutate(iter = lbl)
+    construct_incidence(df, "pois") %>% mutate(iter = lbl)
   }) %>% 
     mutate(Case = "Independent parameters")
   

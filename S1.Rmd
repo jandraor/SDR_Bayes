@@ -35,7 +35,6 @@ library(posterior)
 library(purrr)
 library(readr)
 library(readsdr)
-library(rstan)
 library(scales)
 library(stringr)
 library(tidyr)
@@ -45,6 +44,9 @@ library(viridisLite)
 source("./R/helpers.R")
 source("./R/plots.R")
 source("./R/incidence_comparison.R")
+
+# Backup folder
+fldr <- "./backup_objs/main_text/"
 ```
 
 # Data
@@ -169,7 +171,7 @@ inputs. Given the computational burden of this process, we save the results
 in a RDS file.
 
 ```{r}
-file_path <- "./backup_objs/prior_sims.rds"
+file_path <- file.path(fldr, "prior_sims.rds")
 
 n_sims     <- 500
 pop_size   <- 5234
@@ -365,7 +367,8 @@ for the SD model, the number of stocks (_n_difeq_), the simulation time and the
 Cumberland data.
 
 ```{r fit_norm, results = 'hide'}
-file_path <- "./backup_objs/poisson_fit.rds"
+fldr      <- "./backup_objs/main_text/"
+file_path <- file.path(fldr, "fit.rds")
 
 if(!file.exists(file_path)) {
   stan_d <- list(n_obs    = nrow(flu_data),
@@ -384,14 +387,12 @@ fit <- mod$sample(data            = stan_d,
                   iter_warmup     = 1000,
                   iter_sampling   = 1000,
                   refresh         = 5,
-                  save_warmup     = TRUE)
+                  save_warmup     = TRUE,
+                  output_dir      = fldr)
 
-fit_obj <-list(stan_obj    = read_stan_csv(fit$output_files()),
-               cmdstan_obj = fit)
-
-saveRDS(fit_obj, file_path)
+fit$save_object(file_path)
 } else {
-  fit_obj <- readRDS(file_path)
+  fit <- readRDS(file_path)
 }
 ```
 
@@ -407,9 +408,11 @@ intuitive interpretations of these metrics.
 
 
 ```{r, message = TRUE}
-fit        <- fit_obj$cmdstan_obj
-sf_poisson <- fit_obj$stan_obj
-check_hmc_diagnostics(sf_poisson)
+# We generated this file from $fit$cmdstan_diagnose()
+fileName <- file.path(fldr, "diags.txt")
+
+readChar(fileName, file.info(fileName)$size) %>% 
+  cat()
 ```
 
 
@@ -421,10 +424,12 @@ A common approach to inspect calibration results is to check for convergence
 in trace plots.
 
 ```{r, fig.height = 3}
-a <- trace_plot(sf_poisson, n_samples = 100, "A)") +
+
+
+a <- trace_plot(fit, n_samples = 100, "A)") +
   theme(axis.text = element_text(size = 5))
 
-b <- trace_plot(sf_poisson, subtitle = "B)") +
+b <- trace_plot(fit, subtitle = "B)") +
   theme(axis.text = element_text(size = 5))
 
 print(a + b)
@@ -562,7 +567,7 @@ with the data. The solid blue line denotes the mean trajectory and the grey
 shaded area indicates the 95 % credible interval.
 
 ```{r, fig.height = 3.5}
-posterior_df <- as.data.frame(sf_poisson)
+posterior_df <- fit$draws() %>% as_draws_df()
 
 samples_normal <- posterior_df[ , pars_hat] %>% 
   mutate(R0 = beta / gamma, ll = "Normal")
@@ -664,7 +669,7 @@ the actual data (dots). The dotted line indicates the expected reported incidenc
 In B), we show three examples of the predicted measurements. 
 
 ```{r}
-file_path <- "./backup_objs/posterior_sims.rds"
+file_path <- file.path(fldr, "posterior_sims.rds")
 
 set.seed(1800)
 row_ids      <- sample.int(nrow(pars_df), 500, replace = TRUE)
@@ -794,7 +799,7 @@ among parameters (500 simulations per scenario). In total, we simulate 2,000
 trajectories.
 
 ```{r}
-file_path <- "./backup_objs/forecast.rds"
+file_path <- file.path(fldr, "forecast.rds")
 
 if(!file.exists(file_path)) {
 

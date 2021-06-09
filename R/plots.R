@@ -129,10 +129,9 @@ prior_posterior_plot <- function(pars_df) {
   grid.arrange(g1, g2, g3, nrow = 1)
 }
 
-trace_plot <- function(sf, n_samples = 2000, subtitle = "") {
-  posterior  <- rstan::extract(sf, inc_warmup = TRUE, permuted = FALSE)
-
-  posterior <- posterior[1:n_samples, ,]
+trace_plot <- function(fit, n_samples = 2000, subtitle = "") {
+  posterior  <- fit$draws(inc_warmup = TRUE) %>% as_draws_array()
+  posterior  <- posterior[1:n_samples, ,]
 
   mcmc_trace(posterior, pars = c("beta", "rho", "I0"),
                            facet_args = list(labeller = label_parsed),
