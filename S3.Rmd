@@ -1,0 +1,1360 @@
+---
+title: "S3 Appendix"
+output: 
+  pdf_document:
+    number_sections: true
+urlcolor: blue
+---
+
+This appendix serves a double purpose. On the one hand, it aims to demonstrate
+the advantages of using fake/synthetic data to diagnose problems in calibration
+algorithms. With synthetic data, we aim to answer: "Is it possible to estimate
+the desired parameters with the available data if we have the correct model?". 
+On the other hand, we present a hypothetical example to illustrate the Bayesian
+workflow presented in the main text.
+
+
+\tableofcontents 
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+
+library(bayesplot)
+library(colorspace)
+library(cmdstanr)
+library(dplyr)
+library(extraDistr)
+library(GGally)
+library(ggplot2)
+library(ggpubr)
+library(kableExtra)
+library(MCMCpack)
+library(Metrics)
+library(parallel)
+library(patchwork)
+library(posterior)
+library(purrr)
+library(readsdr)
+library(rstan)
+library(scales)
+library(stringr)
+library(tictoc)
+library(tidyr)
+source("./R/helpers.R")
+source("./R/plots.R")
+```
+
+\newpage
+
+# Synthetic data
+
+We hypothetically received data (Figure 1) from an outbreak of influenza (H1N1)
+in Cumberland, Maryland. This outbreak occurred in 1918, when the population 
+size was 5234. From previous studies, we estimate the latent and infectious
+periods at 2 days each.
+
+```{r}
+mdl_path <- "./models/SEIR.stmx"
+
+
+N          <- 5234
+I_0        <- 2
+R_0        <- 1570
+stock_list <- list(S = N - I_0 - R_0,
+                   E = 0,
+                   I = I_0,
+                   R = R_0,
+                   C = I_0)
+
+const_list <- list(rho = 0.77,
+                   par_beta = 1.29,
+                   N = N,
+                   sigma = 0.5,
+                   par_gamma = 0.5,
+                   I0 = I_0,
+                   R0 = R_0)
+
+actual_pars <- data.frame(name = c("beta", "I(0)", "R(0)", "rho") , 
+                          val = c(1.29, I_0, R_0, 0.77))
+
+mdl       <- read_xmile(mdl_path, stock_list = stock_list,
+                        const_list = const_list)
+```
+
+```{r}
+sim_output <- sd_simulate(mdl$deSolve_components, start_time = 0,
+                          stop_time = 91, timestep = 1 / 128,
+                          integ_method = "rk4")
+
+set.seed(1924)
+
+sim_inc <- sd_net_change(sim_output, "C") %>% dplyr::select(-var) %>% 
+  rename(true_inc = value) %>% 
+  mutate(measured_inc = rpois(nrow(.), true_inc))
+
+actual_df <- sim_inc %>% 
+  rename(x = true_inc,
+         y = measured_inc)
+```
+
+```{r, fig.cap = "Synthetic incidence", fig.height = 3}
+ggplot(sim_inc, aes(x = time, y = true_inc)) +
+  geom_line(colour = "grey95") +
+  geom_point(data = sim_inc, aes(y = measured_inc), colour = "steelblue") +
+  labs(x = "Days since the first case reported",
+       y = "Incidence [New cases per day]") +
+  theme_pubr()
+```
+
+# Calibration
+
+The goal of this exercise is the same as the one described in the main text. In
+particular, we aim to estimate the basic reproduction number ($R_0$). To do so, 
+we fit, through Hamiltonian Monte Carlo, an SEIR model (see equations in
+main text section 2) to the received time-series (incidence data). In doing so,
+we can estimate parameter values that best describe the given data, and from 
+which we can approximate $R_0$.
+
+
+```{r}
+n_sims    <- 500
+pars_list <- vector(mode = "list", length = 3)
+mase_list <- vector(mode = "list", length = 3)
+```
+
+
+## Case 1
+
+After formulating a dynamic hypothesis, the next step in a calibration process 
+consists of determining which parameters are fixed within the dynamic structure,
+and which will be estimated using the MCMC algorithm. We start by considering 
+the case where the effective contact rate ($\beta$) and the initial infectious
+($I(0)$) are unknown. Further, we assume that there is no underreporting 
+($\rho = 1$), and that there are no people with previous immunity ($R(0) = 0$).
+We adopt the priors described in the main text.
+
+
+
+### Priors
+
+
+#### Prior distributions
+
+* $\beta \sim lognormal(0,1)$
+* $I(0)  \sim lognormal(0,1)$
+
+#### Unmodelled predictors
+
+\hfill
+
+```{r}
+data.frame(Predictor = c("$\\rho$", "$\\sigma$", "$\\gamma$", "E(0)", "R(0)", "N"),
+           Value     = c(1, 0.5, 0.5, 0, 0, 5234)) -> df
+
+kable(df, booktab = TRUE, escape = FALSE)
+```
+
+### Prior predictive checks
+
+Then, we check that our prior information captures the data (Figure 2). Based on
+the results below, we *accept the prior*, and proceed to fit the model.
+
+```{r case_1_prior_pred_checks}
+fldr      <- "./backup_objs/Synthetic_data/Case_1"
+file_path <- file.path(fldr, "prior_sims.rds")
+
+if(!file.exists(file_path)) {
+  stock_list <- list(E = 0,
+                     R = 0)
+
+  const_list <- list(N         = N,
+                     sigma     = 0.5,
+                     par_gamma = 0.5,
+                     rho       = 1)
+  set.seed(2044)
+  beta_vals <- rlnorm(n_sims)
+  I0_vals   <- rlnorm(n_sims)
+
+  mdl2 <- read_xmile(mdl_path, stock_list = stock_list,
+                     const_list = const_list)
+
+  consts_df <- data.frame(par_beta = beta_vals)
+  stocks_df <- data.frame(I = I0_vals,
+                          S = N - I0_vals,
+                          C = I0_vals)
+
+  sens_o <- sd_sensitivity_run(mdl2$deSolve_components, start_time = 0, 
+                               stop_time = 91, timestep = 1 / 32,
+                               multicore = TRUE, n_cores = 4, 
+                               integ_method = "rk4", stocks_df = stocks_df,
+                               consts_df = consts_df)
+  saveRDS(sens_o, file_path)
+} else {
+  sens_o <- readRDS(file_path)
+}
+
+sens_inc <- predictive_checks(n_sims, sens_o)
+```
+
+```{r, fig.cap = "Case 1.Prior predictive checks", fig.height = 3}
+meas_df <- sim_inc %>% rename(y = measured_inc) 
+plot_predictive_checks(sens_inc, meas_df)
+```
+
+### Diagnostics
+
+After validating the prior, we run four chains of 1,000 samples allocated
+to each phase (_warm-up_ and _sampling_).
+
+
+```{r}
+pars_hat  <- c("I0", "beta")
+gamma     <- 0.5
+sigma     <- 0.5
+consts    <- sd_constants(mdl)
+ODE_fn    <- "SEIR"
+stan_fun  <- stan_ode_function(mdl_path, ODE_fn, pars = consts$name[2], 
+                               const_list = list(N = N, par_gamma = gamma,
+                                                 sigma = sigma, rho = 1))
+
+fun_exe_line <- str_glue("  o = ode_rk45({ODE_fn}, x0, t0, ts, params);") 
+
+stan_data <- stan_data("y", type = "int", inits = FALSE)
+
+stan_params <- paste(
+  "parameters {",
+  "  real<lower = 0> beta;",
+  "  real<lower = 0> I0;",
+"}", sep = "\n")
+
+stan_tp <- paste(
+  "transformed parameters{",
+  "  vector[n_difeq] o[n_obs]; // Output from the ODE solver",
+  "  real x[n_obs];",
+  "  vector[n_difeq] x0;",
+  "  real params[n_params];",
+  "  x0[1] = 5234 - I0;",
+  "  x0[2] = 0;",
+  "  x0[3] = I0;",
+  "  x0[4] = 0;",
+  "  x0[5] = I0;",
+  "  params[1] = beta;",
+  fun_exe_line,
+  "  x[1] =  o[1, 5]  - x0[5];",
+  "  for (i in 1:n_obs-1) {",
+  "    x[i + 1] = o[i + 1, 5] - o[i, 5] + 1e-5;",
+  "  }",
+  "}", sep = "\n")
+
+stan_model <- paste(
+  "model {",
+  "  beta  ~ lognormal(0, 1);",
+  "  I0    ~ lognormal(0, 1);",
+  "  y     ~ poisson(x);", 
+  "}",
+  sep = "\n")
+
+stan_text   <- paste(stan_fun, stan_data, stan_params,
+                       stan_tp, stan_model, sep = "\n")
+
+stan_filepath <- "./Stan_files/Synthetic_data/Case_1.stan"
+
+create_stan_file(stan_text, stan_filepath)
+```
+
+```{r fit_case_1, results = 'hide'}
+fldr       <- "./backup_objs/Synthetic_data/Case_1"
+file_path  <- file.path(fldr, "Case_1.rds")
+
+if(!file.exists(file_path)) {
+  stan_d <- list(n_obs    = nrow(sim_inc),
+                 y        = sim_inc$measured_inc,
+               n_params = 1,
+               n_difeq  = 5,
+               t0       = 0,
+               ts       = 1:length(sim_inc$measured_inc))
+  
+  mod <- cmdstan_model(stan_filepath)
+
+  fit <- mod$sample(data            = stan_d,
+                    seed            = 276203775,
+                    chains          = 4,
+                    parallel_chains = 4,
+                    iter_warmup     = 1000,
+                    iter_sampling   = 1000,
+                    refresh         = 5,
+                    save_warmup     = TRUE,
+                    output_dir      = fldr)
+
+  fit$save_object(file_path)
+} else {
+  fit <- readRDS(file_path)
+}
+```
+
+#### HMC Diagnostics
+
+\hfill
+
+HMC diagnostics are satisfactory and indicate no pathological behaviour.
+
+
+```{r, message = TRUE}
+# We generated this file from $fit$cmdstan_diagnose()
+fileName <- file.path(fldr, "diag_1.txt")
+
+readChar(fileName, file.info(fileName)$size) %>% cat()
+```
+
+
+#### Trace plots
+
+\hfill
+
+Furthermore, a visual inspection on trace plots (Figure 3) indicate that the
+chains converge.
+
+```{r, fig.height = 3, fig.cap = "Case 1. Trace plots"}
+mcmc_trace(fit$draws(), pars_hat)
+```
+
+#### Metrics
+
+\hfill
+
+Finally, $\widehat{R}$ and $ESS_{bulk}$ are within the predetermined 
+thresholds (< 1.05 and > 400, respectively). Based on all of these diagnostics,
+we *accept the computation* and move to the *posterior predictive checking *
+stage. 
+
+\hfill
+
+```{r}
+par_matrices <- lapply(pars_hat, function(par) {
+  extract_variable_matrix(fit$draws(), par)
+})
+
+ess_vals   <- map_dbl(par_matrices, ess_bulk)
+r_hat_vals <- map_dbl(par_matrices, rhat)
+
+smy_df  <- data.frame(par      = c("I(0)", "$\\beta$"),
+                      ess_bulk = ess_vals,
+                      rhat     = r_hat_vals)
+```
+
+```{r, echo = FALSE}
+colnames(smy_df) <- c("par", "$ESS_{bulk}$", "$\\widehat{R}$")
+kable(smy_df, booktab = TRUE, escape = FALSE)
+```
+
+
+### Posterior predictive checking
+
+However, when we compare the model's fit against the data (Figure 4), we observe
+that the estimated trajectories overestimate the actual behaviour. Assuming no 
+underreporting and no previous recovered individuals produces an inadequate
+explanation of the observed data. In other words, it does not pass the stringent
+validity test of model calibration. For this reason, we deem the model 
+*not trustworthy*. 
+
+```{r case1_fit, fig.height = 3, fig.cap = "Case 1. Fit"}
+posterior_df <- fit$draws() %>% as_draws_df()
+
+plot_ts_fit(posterior_df, actual_df)
+```
+
+```{r case1_MASE}
+source("./R/Metrics_utils.R")
+
+mase_list[[1]] <- get_mase_fit(posterior_df, sim_inc$measured_inc) %>% 
+  mutate(Case = "1")
+
+pars_df <- posterior_df[, pars_hat]
+
+pars_list[[1]] <- pars_df %>% mutate(Case = "1",
+                                     iter = row_number())
+```
+
+
+\newpage
+
+
+## Case 2
+
+Since Case 1's setup do not yield satisfactory results, we consider
+a more complex model. Specifically, $R(0)$ and $\rho$ are no longer assumed as
+unmodelled predictors, resulting in a four-unknowns model. We adopt the priors
+described in the main text. For $R(0)$, we choose a [weakly informative prior](https://github.com/stan-dev/stan/wiki/Prior-Choice-Recommendations).
+
+### Priors
+
+
+#### Prior distributions
+
+* $\beta \sim lognormal(0,1)$
+* $\rho \sim Beta(2,2)$
+* $I(0)  \sim lognormal(0,1)$
+* $R(0)  \sim Normal(0,1e4)$
+
+#### Unmodelled predictors
+
+\hfill
+
+```{r}
+data.frame(Predictor = c("$\\sigma$", "$\\gamma$", "E(0)", "N"),
+           Value     = c(0.5, 0.5, 0, 5234)) -> df
+
+kable(df, booktab = TRUE, escape = FALSE)
+```
+
+### Prior predictive checks
+
+Again, we check that our prior information captures the data (Figure 5). Based
+on the results below, we *accept the prior*, and proceed to fit the model.
+
+```{r case_2_prior_pred_checks}
+fldr      <- "./backup_objs/Synthetic_data/Case_2"
+file_path <- file.path(fldr, "prior_sims.rds")
+
+if(!file.exists(file_path)) {
+  stock_list <- list(E = 0)
+
+  const_list <- list(N         = N,
+                     sigma     = 0.5,
+                     par_gamma = 0.5)
+  set.seed(3181)
+  beta_vals <- rlnorm(n_sims)
+  rho_vals  <- rbeta(n_sims, 2, 2)
+  R0_vals   <- rhnorm(n_sims, 1e4)
+  I0_vals   <- rlnorm(n_sims)
+  
+  # This validations prevents that there are more infected individuals than 
+  # population size
+  val_sum   <- R0_vals + I0_vals
+  val_idx   <- which(val_sum < 5234)
+  
+  beta_vals <- beta_vals[val_idx]
+  rho_vals  <- rho_vals[val_idx]
+  R0_vals   <- R0_vals[val_idx]
+  I0_vals   <- I0_vals[val_idx]
+
+  mdl2 <- read_xmile(mdl_path, stock_list = stock_list,
+                     const_list = const_list)
+
+  consts_df <- data.frame(par_beta = beta_vals,
+                          rho      = rho_vals)
+  stocks_df <- data.frame(I = I0_vals,
+                          S = N - I0_vals - R0_vals,
+                          C = I0_vals,
+                          R = R0_vals)
+
+  sens_o <- sd_sensitivity_run(mdl2$deSolve_components, start_time = 0, 
+                               stop_time = 91, timestep = 1 / 32,
+                               multicore = TRUE, n_cores = 4, 
+                               integ_method = "rk4", stocks_df = stocks_df,
+                               consts_df = consts_df)
+  saveRDS(sens_o, file_path)
+} else {
+  sens_o <- readRDS(file_path)
+}
+
+sens_inc <- predictive_checks(n_sims, sens_o)
+```
+
+```{r, fig.cap = "Case 2. Prior predictive checks", fig.height = 3}
+meas_df <- sim_inc %>% rename(y = measured_inc) 
+plot_predictive_checks(sens_inc, meas_df)
+```
+
+```{r}
+pars_hat  <- c("I0", "R0", "beta", "rho")
+gamma     <- 0.5
+sigma     <- 0.5
+consts    <- sd_constants(mdl)
+ODE_fn    <- "SEIR"
+stan_fun  <- stan_ode_function(mdl_path, ODE_fn, pars = consts$name[c(2, 1)], 
+                               const_list = list(N = N, par_gamma = gamma,
+                                                 sigma = sigma))
+
+fun_exe_line <- str_glue("  o = ode_rk45({ODE_fn}, x0, t0, ts, params);") 
+
+stan_data <- stan_data("y", type = "int", inits = FALSE)
+
+stan_params <- paste(
+  "parameters {",
+  "  real<lower = 0> beta;",
+  "  real<lower = 0, upper = 1> rho;",
+  "  real<lower = 0> I0;",
+  "  real<lower = 0> R0;",
+"}", sep = "\n")
+
+stan_tp <- paste(
+  "transformed parameters{",
+  "  vector[n_difeq] o[n_obs]; // Output from the ODE solver",
+  "  real x[n_obs];",
+  "  vector[n_difeq] x0;",
+  "  real params[n_params];",
+  "  x0[1] = 5234 - I0 - R0;",
+  "  x0[2] = 0;",
+  "  x0[3] = I0;",
+  "  x0[4] = R0;",
+  "  x0[5] = I0;",
+  "  params[1] = beta;",
+  "  params[2] = rho;",
+  fun_exe_line,
+  "  x[1] =  o[1, 5]  - x0[5];",
+  "  for (i in 1:n_obs-1) {",
+  "    x[i + 1] = o[i + 1, 5] - o[i, 5] + 1e-4;",
+  "  }",
+  "}", sep = "\n")
+
+stan_model <- paste(
+  "model {",
+  "  beta  ~ lognormal(0, 1);",
+  "  rho   ~ beta(2, 2);",
+  "  I0    ~ lognormal(0, 1);",
+  "  R0    ~ normal(0, 1e4);",
+  "  y     ~ poisson(x);", 
+  "}",
+  sep = "\n")
+
+stan_text   <- paste(stan_fun, stan_data, stan_params,
+                       stan_tp, stan_model, sep = "\n")
+
+stan_filepath <- "./Stan_files/Synthetic_data/Case_2.stan"
+
+create_stan_file(stan_text, stan_filepath)
+```
+
+```{r}
+stan_d <- list(n_obs    = nrow(sim_inc),
+               y        = sim_inc$measured_inc,
+               n_params = 2,
+               n_difeq  = 5,
+               t0       = 0,
+               ts       = 1:length(sim_inc$measured_inc))
+```
+
+
+### First calibration attempt
+
+\hfill
+
+Once we validate the prior, we run four chains of 1,000 samples allocated
+to each phase (_warm-up_ and _sampling_).
+
+```{r, results = 'hide'}
+fldr       <- "./backup_objs/Synthetic_data/Case_2/Case_2.1"
+file_path  <- file.path(fldr, "Case_2.1.rds")
+
+if(!file.exists(file_path)) {
+
+  mod <- cmdstan_model(stan_filepath)
+
+  fit <- mod$sample(data            = stan_d,
+                    seed            = 638588660,
+                    chains          = 4,
+                    parallel_chains = 4,
+                    iter_warmup     = 1000,
+                    iter_sampling   = 1000,
+                    refresh         = 5,
+                    save_warmup     = TRUE,
+                    output_dir      = fldr)
+  
+  fit$save_object(file_path)
+} else {
+  fit <- readRDS(file_path)
+}
+```
+
+
+#### HMC Diagnostics
+
+\hfill
+
+Stan informs that there are 47 divergent iterations, an indication of
+pathological behaviour that may lead to biased results.
+
+```{r, message = TRUE}
+# We generated this file from $fit$cmdstan_diagnose()
+fileName <- file.path(fldr, "diag_2.1.txt")
+
+readChar(fileName, file.info(fileName)$size) %>% 
+  cat()
+```
+
+#### Pairs-plot
+
+\hfill
+
+Thanks to the _bayesplot_ package, we can pinpoint the divergent iterations 
+(red crosses) in the parameter space (Figure 6).
+
+```{r, fig.cap = "Case 2.1. Pairs-plot"}
+np_cp <- nuts_params(fit)
+mcmc_pairs(fit$draws(), np = np_cp, pars = pars_hat,
+           off_diag_args = list(size = 0.75))
+```
+
+
+#### Trace plots
+
+\hfill
+
+Interestingly, at first sight (Figure 7),  chains appear to converge. There are
+no obvious trends and they seem to mix.
+
+```{r, fig.cap = "Case 2.2. Trace plots", fig.height = 3.5}
+mcmc_trace(fit$draws(), pars_hat)
+```
+
+Upon further inspection (Figure 8), though, we identify the following issues in
+$\beta$'s chains:
+
+- *Chain 2*: Around sample 350, the chain is stuck. The chain around that 
+location (~1.4) is not jumping up and down. On the contrary, it stays there for
+some iterations.
+
+- *Chain 3*: Around sample 430, the chain is stuck. The chain around that
+point (~0.9) is not jumping up and down. On the contrary, it stays there for
+some iterations.
+
+- *Chain 4*: Unlike the other three chains, it describe a different 
+distribution. If we look at the _center_ of the trace plot, we notice that it is 
+different from the other _centers_. Furthermore, the trace plot is narrower than
+the other three chains.
+
+```{r, fig.height = 3.5, fig.cap = "Case 2.1. Beta's trace plots"}
+beta_draws <- extract_variable_matrix(fit$draws(), "beta") %>% 
+  as.data.frame() %>% 
+  mutate(id = row_number()) %>% 
+  pivot_longer(-id, names_to = "Chain")
+
+ggplot(beta_draws, aes(x = id, y = value)) +
+  geom_line(aes(colour = Chain)) +
+  scale_colour_manual(values = sequential_hcl(7, palette = "Blues 3")[1:4]) +
+  facet_wrap(~Chain) +
+  labs(subtitle = "Effective contact rate's chains") +
+  theme_pubr()
+```
+
+#### Metrics
+
+\hfill
+
+We confirm these findings with $\widehat{R}$ and $ESS_{bulk}$. For two out of
+the four parameters, $\widehat{R}$ is higher than its recommended
+threshold (1.05), indicating that convergence was not achieved. Likewise, no
+$ESS_{bulk}$ is above the 400 threshold. Consequently, we deem the computation 
+as *not valid*.
+
+```{r}
+par_matrices <- lapply(pars_hat, function(par) {
+  extract_variable_matrix(fit$draws(), par)
+})
+
+ess_vals   <- map_dbl(par_matrices, ess_bulk)
+r_hat_vals <- map_dbl(par_matrices, rhat)
+
+smy_df  <- data.frame(par      = c("I(0)", "R(0)", "$\\beta$", "$\\rho$"),
+                      ess_bulk = ess_vals,
+                      rhat     = r_hat_vals)
+```
+
+```{r, echo = FALSE}
+colnames(smy_df) <- c("par", "$ESS_{bulk}$", "$\\widehat{R}$")
+kable(smy_df, booktab = TRUE, escape = FALSE)
+```
+
+
+### Second calibration attempt
+
+According to the [Stan manual](https://mc-stan.org/misc/warnings.html), one 
+strategy to address divergent transitions is increasing the _adapt_delta_ 
+parameter. This is the target average proposal acceptance probability during
+Stan’s adaptation period, and increasing it will force Stan to take smaller
+steps. We increase this parameter from its default value (0.8) to 0.99, and
+re-run the sampling process.
+
+```{r, results = 'hide'}
+fldr       <- "./backup_objs/Synthetic_data/Case_2/Case_2.2"
+file_path  <- file.path(fldr, "Case_2.2.rds")
+
+if(!file.exists(file_path)) {
+
+  mod <- cmdstan_model(stan_filepath)
+
+  fit <- mod$sample(data            = stan_d,
+                    seed            = 638588660,
+                    chains          = 4,
+                    parallel_chains = 4,
+                    iter_warmup     = 1000,
+                    iter_sampling   = 1000,
+                    adapt_delta     = 0.99,
+                    refresh         = 5,
+                    save_warmup     = TRUE,
+                    output_dir      = fldr)
+  
+  fit$save_object(file_path)
+} else {
+  fit <- readRDS(file_path)
+}
+```
+
+#### HMC Diagnostics
+
+\hfill
+
+By increasing _adapt_delta_, we eliminated the divergent transitions at the cost
+of hitting the maximum treedepth threshold, which unlike divergent transitions
+is not a validity concern but an efficiency indicator. Despite this indicator
+inform us about the complexity of the posterior explored, we could still use
+the samples for further analysis if the converge and efficiency metrics are
+satisfactory.
+
+
+```{r, message = TRUE}
+# We generated this file from $fit$cmdstan_diagnose()
+fileName <- file.path(fldr, "diag_2.2.txt")
+
+readChar(fileName, file.info(fileName)$size) %>% 
+  cat()
+```
+
+#### Pairs-plot
+
+\hfill
+
+In this updated pairs-plot (Figure 9), we highlight the iterations where the 
+algorithm hit the maximum treedepth, that is, the maximum allowed number of 
+steps taken within an iteration. 
+
+```{r, fig.cap = "Case 2.2. Pairs-plot"}
+np_cp <- nuts_params(fit)
+mcmc_pairs(fit$draws(), np = np_cp, pars = pars_hat,
+           off_diag_args = list(size = 0.75),
+           max_treedepth = 9)
+```
+
+#### Trace plots
+
+\hfill
+
+Trace plots (Figure 10) do not reveal obvious issues in convergence and efficiency.
+
+```{r, fig.cap = "Case 2.2. Trace plots", fig.height = 3.5}
+mcmc_trace(fit$draws(), pars_hat)
+```
+
+#### Metrics
+
+\hfill
+
+$\widehat{R}$ confirms the visual inspection from the trace plots. The chains do
+converge. However, hitting the maximum treedepth affected efficiency. 
+$ESS_{bulk}$ (below 400) indicates that there is no sufficient information to 
+estimate quantities of interest.
+
+```{r}
+par_matrices <- lapply(pars_hat, function(par) {
+  extract_variable_matrix(fit$draws(), par)
+})
+
+ess_vals   <- map_dbl(par_matrices, ess_bulk)
+r_hat_vals <- map_dbl(par_matrices, rhat)
+
+smy_df  <- data.frame(par      = c("I(0)", "R(0)", "$\\beta$", "$\\rho$"),
+                      ess_bulk = ess_vals,
+                      rhat     = r_hat_vals)
+```
+
+```{r, echo = FALSE}
+colnames(smy_df) <- c("par", "$ESS_{bulk}$", "$\\widehat{R}$")
+kable(smy_df, booktab = TRUE, escape = FALSE)
+```
+
+### Third calibration attempt
+
+To address the efficiency issues detected in the previous run, we increase
+in the number of samples from 1,000 to 1,500, and increase the maximum number
+of steps allowed per iteration.
+
+```{r, results = 'hide'}
+fldr       <- "./backup_objs/Synthetic_data/Case_2/Case_2.3"
+file_path  <- file.path(fldr, "Case_2.3.rds")
+
+if(!file.exists(file_path)) {
+
+  mod <- cmdstan_model(stan_filepath)
+
+  fit <- mod$sample(data            = stan_d,
+                    seed            = 638588660,
+                    chains          = 4,
+                    parallel_chains = 4,
+                    iter_warmup     = 1500,
+                    iter_sampling   = 1500,
+                    adapt_delta     = 0.99,
+                    max_treedepth   = 20,
+                    refresh         = 5,
+                    save_warmup     = TRUE,
+                    output_dir      = fldr)
+  
+  fit$save_object(file_path)
+} else {
+  fit <- readRDS(file_path)
+}
+```
+
+#### HMC Diagnostics
+
+\hfill
+
+HMC diagnostics are satisfactory and indicate no pathological behaviour.
+
+```{r, message = TRUE}
+# We generated this file from $fit$cmdstan_diagnose()
+fileName <- file.path(fldr, "diag_2.3.txt")
+
+readChar(fileName, file.info(fileName)$size) %>% 
+  cat()
+```
+
+#### Trace plots
+
+\hfill
+
+Trace plots (Figure 11) do not reveal obvious issues in convergence and 
+efficiency.
+
+```{r, fig.height = 3, fig.cap = "Case 2.3. Trace plots"}
+mcmc_trace(fit$draws(), pars_hat)
+```
+
+#### Metrics
+
+\hfill
+
+$\widehat{R}$ and $ESS_{bulk}$ are within the predetermined thresholds
+(< 1.05 and > 400, respectively). Based on all of these diagnostics,
+we *accept the computation* and move forward to the
+*posterior predictive checking * stage. 
+
+\hfill
+
+```{r}
+par_matrices <- lapply(pars_hat, function(par) {
+  extract_variable_matrix(fit$draws(), par)
+})
+
+ess_vals   <- map_dbl(par_matrices, ess_bulk)
+r_hat_vals <- map_dbl(par_matrices, rhat)
+
+
+
+smy_df  <- data.frame(par      = c("I(0)", "R(0)", "$\\beta$", "$\\rho$"),
+                      ess_bulk = ess_vals,
+                      rhat     = r_hat_vals)
+```
+
+```{r, echo = FALSE}
+colnames(smy_df) <- c("par", "$ESS_{bulk}$", "$\\widehat{R}$")
+kable(smy_df, booktab = TRUE, escape = FALSE)
+```
+
+### Posterior predictive checking
+
+By comparing simulated trajectories and the actual data (Figure 12), we see that
+this structure is an adequate explanation of the observed incidence. Thus, we 
+_accept the model_ for parameter estimation.
+
+```{r case2_fit, fig.height = 3, fig.cap = "Case 2. Fit"}
+posterior_df <- fit$draws() %>% as_draws_df()
+
+plot_ts_fit(posterior_df, actual_df)
+```
+
+### Parameter estimations
+
+Before estimating marginal posterior uncertainty intervals, it is good practice
+to check for the correlations among parameters (Figure 13). Here, we can 
+appreciate this model's complexity by looking at the large degree of 
+correlations in this parameter space.
+
+```{r case_2_distributions, fig.cap = "Case 2. Marginal and joint distributions"}
+pars_df <- posterior_df[, pars_hat]
+pairs_posterior(pars_df, strip_text = 10)
+
+pars_list[[2]] <- pars_df %>% mutate(Case = "2",
+                                     iter = row_number())
+```
+
+### Uncertainty intervals
+
+```{r}
+pars_df %>% mutate(id = row_number()) %>% 
+  pivot_longer(-id) %>% 
+  group_by(name) %>% 
+  summarise(Mean       = round(mean(value), 2),
+            bound_val  = round(quantile(value, c(0.025, 0.975)),2),
+            bound_type = c("2.5\\%", "97.5\\%")) %>% 
+  pivot_wider(names_from = bound_type, values_from = bound_val) -> est_df
+```
+
+```{r, echo = FALSE}
+est_df$name <- c("$\\beta$", "I(0)", "R(0)","$\\rho$")
+kable(est_df, booktab = TRUE, escape = FALSE)
+```
+
+```{r case2_MASE}
+source("./R/Metrics_utils.R")
+
+mase_list[[2]] <- get_mase_fit(posterior_df, sim_inc$measured_inc) %>% 
+  mutate(Case = "2")
+```
+
+
+
+## Case 3
+
+Although Case 2 is computationally satisfactory, the uncertainty around the
+estimates could be improved if there were more data. Fortunately, a new 
+pre-print has just been published. This study reports that 30 % of the 
+population have antibodies against this virus. In light of this new data, we
+update the calibration setup.
+
+### Priors
+
+#### Prior distributions
+
+* $\beta \sim lognormal(0,1)$
+* $\rho \sim Beta(2,2)$
+* $I(0)  \sim lognormal(0,1)$
+
+#### Unmodelled predictors
+
+\hfill
+
+```{r}
+data.frame(Predictor = c("$\\sigma$", "$\\gamma$", "E(0)", "R(0)", "N"),
+           Value     = c(0.5, 0.5, 0, 1570, 5234)) -> df
+
+kable(df, booktab = TRUE, escape = FALSE)
+```
+
+### Prior predictive checks
+
+As in Cases 1 & 2, we check that our prior information captures the data. Based
+on the results (Figure 14), we *accept the prior*, and proceed to fit the model.
+
+```{r case_3_prior_pred_checks}
+fldr      <- "./backup_objs/Synthetic_data/Case_3"
+file_path <- file.path(fldr, "prior_sims.rds")
+
+if(!file.exists(file_path)) {
+  
+  stock_list <- list(E = 0,
+                     R = 1570)
+
+  const_list <- list(N         = N,
+                     sigma     = 0.5,
+                     par_gamma = 0.5)
+  
+  set.seed(2041)
+  beta_vals <- rlnorm(n_sims)
+  rho_vals  <- rbeta(n_sims, 2, 2)
+  I0_vals   <- rlnorm(n_sims)
+  
+  mdl2 <- read_xmile(mdl_path, stock_list = stock_list,
+                     const_list = const_list)
+
+  consts_df <- data.frame(par_beta = beta_vals,
+                          rho      = rho_vals)
+  
+  stocks_df <- data.frame(I = I0_vals,
+                          S = N - I0_vals - 1570,
+                          C = I0_vals)
+
+  sens_o <- sd_sensitivity_run(mdl2$deSolve_components, start_time = 0, 
+                               stop_time = 91, timestep = 1 / 32,
+                               multicore = TRUE, n_cores = 4, 
+                               integ_method = "rk4", stocks_df = stocks_df,
+                               consts_df = consts_df)
+  saveRDS(sens_o, file_path)
+} else {
+  sens_o <- readRDS(file_path)
+}
+
+sens_inc <- predictive_checks(n_sims, sens_o)
+```
+
+```{r, fig.cap = "Case 3. Prior predictive checks", fig.height = 3}
+meas_df <- sim_inc %>% rename(y = measured_inc) 
+plot_predictive_checks(sens_inc, meas_df)
+```
+
+### Diagnostics
+
+In this calibration setup, we run four chains of 1,000 samples allocated
+to each phase (_warm-up_ and _sampling_) and HMC's default settings. 
+
+
+```{r}
+pars_hat  <- c("I0", "beta", "rho")
+
+stan_filepath <- "./Stan_files/example/flu_poisson.stan"
+```
+
+```{r case_3_run, results = 'hide'}
+fldr       <- "./backup_objs/Synthetic_data/Case_3"
+file_path  <- file.path(fldr, "Case_3.rds")
+
+if(!file.exists(file_path)) {
+  stan_d <- list(n_obs    = nrow(sim_inc),
+                 y        = sim_inc$measured_inc,
+               n_params = 2,
+               n_difeq  = 5,
+               t0       = 0,
+               ts       = 1:length(sim_inc$measured_inc))
+
+mod <- cmdstan_model(stan_filepath)
+
+fit <- mod$sample(data            = stan_d,
+                  seed            = 594675061,
+                  chains          = 4,
+                  parallel_chains = 4,
+                  iter_warmup     = 1000,
+                  iter_sampling   = 1000,
+                  refresh         = 5,
+                  save_warmup     = TRUE,
+                  output_dir      = fldr)
+
+  fit$save_object(file_path)
+} else {
+  fit <- readRDS(file_path)
+}
+```
+
+#### HMC Diagnostics
+
+\hfill
+
+HMC diagnostics are satisfactory and indicate no pathological behaviour.
+
+
+```{r case_3_HMC_diag, message = TRUE}
+# We generated this file from $fit$cmdstan_diagnose()
+fileName <- file.path(fldr, "diag_3.txt")
+
+readChar(fileName, file.info(fileName)$size) %>% cat()
+```
+
+### Trace plot
+
+\hfill
+
+Trace plots (Figure 15) do not reveal obvious issues in convergence and 
+efficiency.
+
+```{r case_3_trace_plots, fig.cap = "Case 3. Trace plots", fig.height = 2.5}
+mcmc_trace(fit$draws(), pars_hat)
+```
+
+#### Metrics
+
+\hfill
+
+$\widehat{R}$ and $ESS_{bulk}$ are within the predetermined thresholds
+(< 1.05 and > 400, respectively). Based on all of these diagnostics,
+we *accept the computation* and move to the *posterior predictive checking *
+stage. 
+
+\hfill
+
+```{r}
+par_matrices <- lapply(pars_hat, function(par) {
+  extract_variable_matrix(fit$draws(), par)
+})
+
+ess_vals   <- map_dbl(par_matrices, ess_bulk)
+r_hat_vals <- map_dbl(par_matrices, rhat)
+
+
+
+smy_df  <- data.frame(par      = c("I(0)", "$\\beta$", "$\\rho$"),
+                      ess_bulk = ess_vals,
+                      rhat     = r_hat_vals)
+```
+
+```{r, echo = FALSE}
+colnames(smy_df) <- c("par", "$ESS_{bulk}$", "$\\widehat{R}$")
+kable(smy_df, booktab = TRUE, escape = FALSE)
+```
+
+### Posterior predictive checking
+
+By comparing simulated trajectories and the actual data (Figure 16), we see that
+this  structure is an adequate explanation of the observed incidence. Thus, we 
+_accept the model_ for parameter estimation.
+
+```{r case3_fit, fig.height = 3, fig.cap = "Case 3. Fit"}
+posterior_df <- fit$draws() %>% as_draws_df()
+
+plot_ts_fit(posterior_df, actual_df)
+```
+
+### Parameter estimations
+
+As with Case 2, we check for the correlations among parameters (Figure 17). Even
+though the correlation between $I(0)$ and $\beta$ slightly increased; 
+correlations between $\rho$ and $I(0)$, and $\rho$ and $\beta$ were
+significantly reduced in this revised setup.
+
+
+```{r case_3_distributions, fig.cap = "Case 3. Marginal and joint distributions"}
+pars_df <- posterior_df[, pars_hat]
+pairs_posterior(pars_df, strip_text = 10)
+
+pars_list[[3]] <- pars_df %>% mutate(Case = "3",
+                                     iter = row_number())
+```
+
+
+### Uncertainty intervals
+
+Finally, we accept these estimates as we deem they provide useful information.
+
+```{r}
+pars_df %>% mutate(id = row_number()) %>% 
+  pivot_longer(-id) %>% 
+  group_by(name) %>% 
+  summarise(Mean       = round(mean(value), 2),
+            bound_val  = round(quantile(value, c(0.025, 0.975)),2),
+            bound_type = c("2.5\\%", "97.5\\%")) %>% 
+  pivot_wider(names_from = bound_type, values_from = bound_val) -> est_df
+```
+
+```{r, echo = FALSE}
+est_df$name <- c("$\\beta$", "I(0)", "$\\rho$")
+kable(est_df, booktab = TRUE, escape = FALSE)
+```
+
+```{r case3_MASE}
+source("./R/Metrics_utils.R")
+
+mase_list[[3]] <- get_mase_fit(posterior_df, sim_inc$measured_inc) %>% 
+  mutate(Case = "3")
+```
+
+## Fit performance
+
+To conclude with this section, we present a comparison of the calibration 
+performance among the three cases.
+
+### MASE 
+
+
+Similar to the example presented in the main text, we use the Mean Absolute 
+Scaled Error (MASE) as a measure of fit accuracy. The reader should recall that
+MASE < 1 indicates adequate performance, and lower values point to better fits.
+In Figure 18A, it is seen that unlike Cases 2 and 3, Case 1 does not explain the 
+data adequately. Moreover, Cases 2 and 3 obtained similar performance scores
+(Figure 18B).
+
+```{r, fig.height = 4, fig.width = 4, fig.cap = "MASE comparison"}
+all_MASE_df <- do.call("bind_rows", mase_list)
+
+ggplot(all_MASE_df, aes(x = Case, y = mase)) +
+  geom_boxplot(aes(group = Case)) +
+  geom_hline(yintercept = 1, colour = "red", linetype ="dotted") +
+  theme_pubr() +
+  labs(subtitle = "A)", y = "MASE")-> g1
+
+ggplot(all_MASE_df %>% 
+         filter(Case != "1"), aes(x = Case, y = mase)) +
+  geom_boxplot(aes(group = Case)) +
+  geom_hline(yintercept = 1, colour = "red", linetype ="dotted") +
+  theme_pubr() +
+  labs(subtitle = "B)", y = "MASE")-> g2
+
+g1 / g2
+```
+
+
+
+
+### Parameter recovery
+
+Lastly, in Figure 19, we present posterior marginal distributions compared 
+against the actual value (red dashed line). In Case 1, failing to explain the 
+data adequately leads to obtain unreliable estimates. Conversely, both Cases 2 &
+3 explains correctly the data and capture the actual values. However, they 
+differ in the degree of uncertainty.
+
+
+```{r, fig.cap = "Parameter estimates per case", fig.height = 3.5}
+all_df <- do.call("bind_rows", pars_list)
+
+tidy_all <- all_df %>% pivot_longer(c(-Case, -iter)) %>% 
+  mutate(name = case_when(
+    name == "I0" ~ "I(0)",
+    name == "R0" ~ "R(0)",
+    TRUE ~ as.character(name)))
+
+ggplot(tidy_all, aes(x = Case, y = value)) +
+  geom_boxplot(aes(group = Case)) +
+  facet_wrap(~name, scales = "free", labeller = label_parsed) +
+  geom_hline(data = actual_pars, aes(yintercept = val), alpha = 0.5, 
+             colour = "red", linetype = "dashed") +
+  theme_pubr()
+```
+
+\newpage
+
+# Random-Walk Metropolis fit
+
+We add this section to further corroborate that an SEIR with four unknown
+parameters is a  high-dimensional structure that generates a complex parameter
+space of difficult exploration. To demonstrate this complexity, we fit the
+aforementioned model to the synthetic incidence data using the Random-Walk
+Metropolis algorithm.
+
+
+```{r}
+source("./R/sd_loglik_fun.R")
+source("./R/posterior_components.R")
+
+set.seed(131103)
+inits_I    <- runif(4, -2, 2)
+inits_R    <- log(runif(4, 0, 5000))
+inits_beta <- runif(4, -2, 2)
+inits_rho  <- runif(4, -2, 2)
+
+pars_df <- data.frame(name      = c("I", "R", "par_beta", "rho"),
+                      type      = c("stock", "stock", "constant", "constant"),
+                      par_trans = c("log", "log", "log", "logit"))
+
+sim_controls <- list(start = 0, stop = 91, step = 1 / 64, integ_method = "rk4")
+
+fit_options <- list(stock_name = "C", 
+                    stock_fit_type = "net_change",
+                    dist = list(name     = "dpois",
+                                sim_data = "lambda",
+                                dist_offset = "1e-5"),
+                    data = sim_inc$measured_inc)
+
+extra_stocks <- list(list(name = "C", init = "I"),
+                     list(name = "S", init = "5234 - R - I"))
+
+extra_constraints <- list("I + R >= 5234")
+
+loglik <- sd_loglik_fun(pars_df, mdl$deSolve_components, sim_controls,
+                        fit_options, extra_stocks, extra_constraints)
+
+logprior <- function(pars) {
+  par_I      <- exp(pars[1])
+  par_R      <- exp(pars[2])
+  par_beta   <- exp(pars[3])
+  par_rho    <- expit(pars[4])
+  
+  dlnorm(par_I, meanlog = 0, sd = 1, log = TRUE)      +
+    dnorm(par_R, mean = 0, sd = 1e4, log = TRUE) +
+    dlnorm(par_beta, meanlog = 0, sd = 1, log = TRUE) +
+    dbeta(par_rho, shape1 = 2, shape2 = 2, log = TRUE)
+}
+
+posterior_fun <- function(pars) loglik(pars) + logprior(pars) 
+```
+
+```{r}
+fn <- "./backup_objs/Synthetic_data/Case_2_RWM.rds"
+
+if(!file.exists(fn)) {
+  tic.clearlog()
+  tic()
+  
+  mclapply(1:4, function(i) {
+    n_iter  <- 10000
+    inits   <- c(inits_I[[i]], inits_R[[i]], inits_beta[[i]], inits_rho[[i]])
+    seed    <- 149694674
+    
+    MCMCmetrop1R(
+      fun = posterior_fun,
+      theta.init = inits,
+      mcmc       = n_iter, 
+      burnin     = n_iter,
+      seed       = seed, 
+      verbose    = 1) -> mcmc_output
+    
+  posterior_df <- as.data.frame(mcmc_output) %>%
+    set_names(c("I0", "R0", "beta", "rho")) %>% 
+    mutate(I0   = exp(I0),
+           R0   = exp(R0),
+           beta  = exp(beta),
+           rho   = expit(rho),
+           Chain = i)
+  }, mc.cores = 4) -> post_obj
+
+  toc(quiet = FALSE, log = TRUE)
+  log.lst <- tic.log(format = FALSE)
+      
+  result_obj <- list(post_obj     = post_obj,
+                     time         = log.lst)
+  
+  saveRDS(result_obj, fn)
+} else {
+  result_obj <- readRDS(fn)
+}
+```
+
+```{r}
+caption <- "Unknown parameters' trace plots constructed from the samples obtained from RWM." 
+```
+
+
+## Trace plots
+
+In Figure 20, it can be seen that after 10,000 burn-in iterations (the reader
+should recall that the trace plots presented below correspond to the samples
+generated in the *sampling phase*), the chains do not converge. On the one
+hand, one of the chains (Chain 1) is not stationary considering that it exhibits
+visible trends in parameters $I(0)$ (downwards) and $\beta$ (upwards). On the 
+other hand, all four chains describe different distributions. Namely, they do
+not mix.
+
+```{r, fig.cap = caption}
+posterior_df <- do.call("bind_rows", result_obj$post_obj)
+
+color_scheme_set("viridis")
+bayesplot::mcmc_trace(posterior_df)
+```
+
+## Actual values coverage
+
+Considering that the sampling process does not converge, parameter estimates 
+from the samples cannot be trusted. However, for illustration purposes, we 
+compare such estimates with actual values (Figure 21). In this comparison, we 
+observe the unreliability of the estimated posterior distribution as not all 
+chains captured the desired values.
+
+```{r}
+caption <- "Marginal posterior distributions per chain obtained from fitting (via RWM) an SEIR model with four unknowns to incidence data"
+```
+
+
+```{r, fig.cap = caption, fig.height = 3.5}
+tidy_posterior <- posterior_df %>% 
+  rename(`I(0)` = I0,
+         `R(0)` = R0) %>% 
+  mutate(iter = row_number()) %>% 
+  pivot_longer(c(-Chain, - iter))
+
+ggplot(tidy_posterior, aes(x = Chain, y = value)) +
+  geom_boxplot(aes(group = Chain)) +
+  facet_wrap(~name, scales = "free", labeller = label_parsed) +
+  geom_hline(data = actual_pars, aes(yintercept = val), alpha = 0.5, 
+             colour = "red", linetype = "dashed") +
+  labs(y = "Value") +
+  theme_pubr()
+```
+
+

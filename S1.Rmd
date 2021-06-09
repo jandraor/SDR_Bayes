@@ -1,11 +1,12 @@
 ---
-title: "Supplementary Information"
+title: "S1 Appendix"
 output: 
   pdf_document:
     number_sections: true
 header-includes:
   - \usepackage{booktabs}
 urlcolor: blue
+bibliography: bibliography.bib
 ---
 
 ```{r setup, include=FALSE, message=FALSE, echo=FALSE}
@@ -30,6 +31,7 @@ library(kableExtra)
 library(lubridate)
 library(Metrics)
 library(patchwork)
+library(posterior)
 library(purrr)
 library(readr)
 library(readsdr)
@@ -37,6 +39,7 @@ library(rstan)
 library(scales)
 library(stringr)
 library(tidyr)
+library(viridisLite)
 
 # Custom functions
 source("./R/helpers.R")
@@ -198,6 +201,7 @@ if(!file.exists(file_path)) {
   sens_o <- readRDS(file_path)
 }
 
+set.seed(346282)
 sens_inc <- predictive_checks(n_sims, sens_o)
 ```
 
@@ -246,6 +250,36 @@ g <- g1 / g2
 ggsave("./plots/A_prior_predictive_checks.pdf", plot = g, dpi = "print", 
        height = 5, width = 7)
 ```
+
+### Measurement model
+
+```{r, fig.height = 6}
+set.seed(102667)
+
+pois_meas <- sens_inc %>% mutate(dist = "Poisson")
+# Normal distributed measurements
+norm_meas   <- predictive_checks(n_sims, sens_o, "norm") %>% 
+  mutate(dist = "Normal")
+# Negative binomial measurements
+nbinom_meas <- predictive_checks(n_sims, sens_o, "nbinom") %>% 
+  mutate(dist = "Neg binom")
+
+meas_df <- bind_rows(pois_meas, norm_meas, nbinom_meas)
+
+n1 <- ggplot(meas_df, aes(x = time, y = y)) +
+  geom_line(aes(group = iter), alpha = 0.1, colour = "grey50") +
+  geom_point(data = flu_data, aes(x = time, y = y), size = 0.5, 
+             colour = "steelblue") +
+  facet_wrap(~dist, ncol = 1, scales = "free") +
+  theme_pubclean() +
+  labs(y        = "Incidence [People / day]",
+       x        = "Time [Days]",
+       subtitle = "")
+
+print(n1)
+```
+
+
 
 ## Fitting
 
@@ -352,10 +386,12 @@ fit <- mod$sample(data            = stan_d,
                   refresh         = 5,
                   save_warmup     = TRUE)
 
-sf_poisson <- rstan::read_stan_csv(fit$output_files())
-saveRDS(sf_poisson, file_path)
+fit_obj <-list(stan_obj    = read_stan_csv(fit$output_files()),
+               cmdstan_obj = fit)
+
+saveRDS(fit_obj, file_path)
 } else {
-  sf_poisson <- readRDS(file_path)
+  fit_obj <- readRDS(file_path)
 }
 ```
 
@@ -369,7 +405,10 @@ saturate the maximum tree depth indicate a complex likelihood surface. The
 [Stan manual](https://mc-stan.org/misc/warnings.html#runtime-warnings) provides
 intuitive interpretations of these metrics.
 
+
 ```{r, message = TRUE}
+fit        <- fit_obj$cmdstan_obj
+sf_poisson <- fit_obj$stan_obj
 check_hmc_diagnostics(sf_poisson)
 ```
 
@@ -396,16 +435,116 @@ ggsave("./plots/A_traceplot.pdf", plot = a + b, dpi = "print", height = 3,
        width = 8)
 ```
 
-#### Effective Sample Size (ESS) & potential reduction factor ($\hat{R}$) 
+#### Potential reduction factor ($\widehat{R}$) & Effective Sample Size ($\hat{n}_{eff}$)  
 
 \hfill
 
-```{r}
-smy_obj <- rstan::summary(sf_poisson, c("beta", "rho", "I0"))
-smy_df  <- smy_obj$summary %>% as.data.frame()
+$\widehat{R}$ is a convergence diagnostic [@Vehtari_2021], which compares the 
+between- and within-chain estimates for model parameters and other univariate 
+quantities of interest. If chains have not mixed well, R-hat is larger than 1. 
+It is recommended running at least *four chains* by default and only using the 
+sample if R-hat is less than 1.05. **Stan reports R-hat which is the maximum of 
+rank normalized split-R-hat and rank normalized folded-split-R-hat, which works 
+for thick tailed distributions and is sensitive also to differences in scale**.
 
-kable(smy_df [, c("mean", "sd", "n_eff", "Rhat")], booktab = TRUE)
+For each parameter $\theta$, we split each chain from the *sampling phase* in 
+two halves. That is, from 4 chains of 1000 draws each one, we obtain 8 split
+chains of 500 draws each one. Then, we label the simulations as 
+$\theta_{ij} (i = 1, . . . , N; j = 1, . . . , M)$, where $N$ is the number of 
+samples per split chain, $M$ is the number of split chains, and $S = NM$ is the
+total number of draws from all chains. We subsequently transform these 
+simulations to their corresponding rank normalized values $z_{ij}$. According to
+@Vehtari_2021, we replace each value $\theta_{ij}$ by its rank $r_{ij}$ within 
+the pooled draws from all chains. Second, we transform ranks to normal scores 
+using the inverse normal transformation and a fractional offset via Equation 1:
+
+\begin{equation}
+z_{ij} = \Phi^{-1}\left(\frac{r_{ij} - 3/8}{S - 1/4}\right)
+\end{equation}
+
+Using these normal scores, we calculate $\widehat{R}$ following the formulation
+proposed by [@gelman2013bayesian]. Initially, we compute $B$ and $W$ , the 
+between- and within-sequence variances, respectively:
+
+\begin{equation}
+B = \frac{N}{M-1}\sum^{M}_{j = 1}(\bar{z}_{.j} - \bar{z}_{..})^2,
+\;where\; \bar{z}_{.j} = \frac{1}{n}\sum^{n}_{i = 1}z_{ij},\;
+\bar{z}_{..} = \frac{1}{M} \sum^{M}_{j=1} \bar{z}_{.j}
+\end{equation}
+
+\begin{equation}
+W = \frac{1}{M}\sum_{j = 1}^{M}s_{j}^2,\; where\;
+s_{j}^2 = \frac{1}{N-1}\sum^{n}_{i = 1}(z_{ij} - \bar{z}_{.j})^2
+\end{equation}
+
+Then, we can estimate $\widehat{var}^{+}(\theta|y)$, the marginal posterior
+variance of the parameter, by a weighted average of $W$ and $B$:
+
+\begin{equation}
+\widehat{var}^{+}(\theta|y) = \frac{N-1}{N}W + \frac{1}{N}B
+\end{equation}
+
+From (3) and (4), we obtain the rank normalized split $\widehat{R}$:
+
+\begin{equation}
+\widehat{R} = \sqrt{\frac{\widehat{var}^{+}(\theta|y)}{W}}
+\end{equation}
+
+
+To obtain the rank normalized folded-split $\widehat{R}$, we simply transform
+the simulations (Equation 6) and then apply the procedure described above 
+(Equations 1-5).
+
+\begin{equation}
+\zeta_{ij} = |\theta_{ij} - median(\theta)|
+\end{equation}
+
+For MCMC draws, we define the estimated effective sample size as
+
+\begin{equation}
+\hat{n}_{eff} = \frac{MN}{1 + 2 \sum_{t=1}^{T}\hat{\rho}_t}
+\end{equation}
+
+This quantity requires an estimate of the sum of the correlations $\rho$
+up to lag T (the first odd positive integer for which 
+${\hat{\rho}}_{T+1} + {\hat{\rho}}_{T+2}$ is negative). The correlation at any 
+specific lag $t$ (Equation 8) depends upon the estimate $\widehat{var}^{+}$ 
+and the *Variogram* at each $t$ (Equation 9).
+
+\begin{equation}
+\hat{\rho_t} = 1 - \frac{V_t}{2\widehat{var}^{+}} 
+\end{equation}
+
+\begin{equation}
+V_t = \frac{1}{M(N - t)} \sum_{j=1}^{M}\sum_{i=t+1}^{N}(z_{i,j} - z_{i -t, j})^2 
+\end{equation}
+
+We use the term *bulk effective sample size* to refer to the effective sample 
+size based on the rank normalized draws. To ensure reliable estimates of 
+variances and autocorrelations needed for $\hat{R}$ and $\hat{n}_{eff}$, @Vehtari_2021 
+recommend that the rank-normalized effecive sample size must be greater than 400
+(100 per chain).
+
+
+```{r}
+unk_pars <- c("beta", "rho", "I0")
+
+par_matrices <- lapply(unk_pars, function(par) {
+  extract_variable_matrix(fit$draws(), par)
+})
+
+ess_vals   <- map_dbl(par_matrices, ess_bulk)
+r_hat_vals <- map_dbl(par_matrices, rhat)
+
+smy_df  <- data.frame(par      = c("beta", "rho", "I(0)"),
+                      ess_bulk = ess_vals,
+                      rhat     = r_hat_vals)
 ```
+
+```{r, echo = FALSE}
+kable(smy_df, booktab = TRUE)
+```
+
 
 #### Check deterministic fit
 
@@ -436,7 +575,7 @@ summary_df <- y_hat_df_norm  %>% group_by(time) %>%
             y  = mean(value))
 
 ggplot(summary_df, aes(x = time , y)) +
-geom_ribbon(aes(ymin = lb, ymax = ub), fill = "grey90") +
+  geom_ribbon(aes(ymin = lb, ymax = ub), fill = "grey90") +
   geom_line(colour = "steelblue") +
   geom_point(data = flu_data) +
   theme_pubclean() +
@@ -561,43 +700,32 @@ ppc <- predictive_checks(n_sims, sens_o)
 expected_value <- ppc %>% group_by(time) %>% 
   summarise(y = mean(y))
 
-g1 <- ggplot(ppc, aes(x = time, y = y)) +
-  geom_line(aes(group = iter), alpha = 0.1, colour = "grey50") +
-  geom_point(data = flu_data, aes(x = time, y = y), size = 0.5,
-            colour = "steelblue") +
+sample_traj <- sample.int(n_sims, 3) %>% sort()
+ppc_rest    <- ppc %>% filter(!iter %in% sample_traj)
+
+ppc1        <- ppc %>% filter(iter == sample_traj[[1]])
+ppc2        <- ppc %>% filter(iter == sample_traj[[2]])
+ppc3        <- ppc %>% filter(iter == sample_traj[[3]])
+
+line_cols   <- viridisLite::viridis(3)
+
+g <- ggplot(ppc_rest, aes(x = time, y = y)) +
+  geom_line(aes(group = iter), alpha = 0.01, colour = "grey50") +
+  geom_point(data = flu_data, aes(x = time, y = y), size = 1,
+            colour = "steelblue", alpha = 0.75) +
   geom_line(data = expected_value, colour = "black", linetype = "dashed") +
+  geom_line(data = ppc1, colour = line_cols[[1]], alpha = 0.9) +
+  geom_line(data = ppc2, colour = line_cols[[2]], alpha = 0.9) +
+  geom_line(data = ppc3, colour = line_cols[[3]], alpha = 0.9) +
   theme_pubclean() +
-  labs(subtitle = "A)",
-       y     = "Incidence [People / day]",
+  labs(y     = "Incidence [People / day]",
        x     = "Days")
 
-sample_traj <- sample.int(n_sims, 3) %>% sort()
-
-
-
-gs <- map2(sample_traj, c("B)", "", "") ,function(i, subtitle) {
-  sample_df <- filter(ppc, iter == i)
-  
-  ggplot(sample_df, aes(x = time, y = y)) +
-  geom_line(alpha = 0.8, colour = "grey20") +
-  geom_point(data = flu_data, aes(x = time, y = y), size = 0.5, 
-             colour = "steelblue", alpha = 0.5) +
-  theme_pubclean() +
-  labs(subtitle = subtitle,
-       y     = "Incidence [People / day]",
-       x     = "Days") +
-  theme(legend.position = "none",
-        axis.title = element_text(size = 6, colour = "grey45"),
-        axis.text  = element_text(size = 4, colour = "grey45"))
-})
-
-
-patch_g <- g1 + (gs[[1]] / gs[[2]] / gs[[3]])
-print(patch_g)
+print(g)
 ```
 
 ```{r, echo = FALSE}
-ggsave("./plots/A_ppc.pdf", plot = patch_g, dpi = "print", height = 5, 
+ggsave("./plots/A_ppc.pdf", plot = g, dpi = "print", height = 5, 
        width = 8)
 ```
 
@@ -730,3 +858,5 @@ ggsave("./plots/A_prediction.pdf", dpi = "print", height = 5,
 ```{r}
 sessionInfo()
 ```
+
+# References
