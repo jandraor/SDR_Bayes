@@ -607,9 +607,9 @@ rwm_traces[[6]] / HMC_traces[[6]]
 
 $\widehat{R}$ is a measure of convergence and unlike computational time, it is
 technologically independent. Based on the results presented in Figure 11, we 
-confirm that, for this example, RWM requires at least 1500 burn-in samples to
-reach convergence ($\widehat{R} < 1.05$), a value significantly higher than the
-equivalent number of samples (200) observed in HMC.
+confirm that, for this example, RWM requires at least 2000 burn-in samples so 
+that all parameters reach convergence ($\widehat{R} < 1.01$), a value
+significantly higher than the equivalent number of samples (500) observed in HMC.
 
 ```{r rhat_RWM}
 imap_dfr(posterior_list, function(df, n_iter) {
@@ -657,7 +657,7 @@ ggplot(diag_df, aes(x = as.numeric(n_iter), y = rhat)) +
   geom_line(aes(group = method, colour = method), alpha = 0.5) +
   scale_colour_manual(values = c("#077893", "#FF9465")) +
   facet_grid(method~par, labeller = label_parsed, scales = "free") +
-  geom_hline(yintercept = 1.05, colour = "red", linetype = "dashed") +
+  geom_hline(yintercept = 1.01, colour = "red", linetype = "dashed") +
   labs(x = "# iters") + 
   theme_pubclean() +
   theme(legend.position = "none")
