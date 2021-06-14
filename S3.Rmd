@@ -791,8 +791,8 @@ if(!file.exists(file_path)) {
                     seed            = 638588660,
                     chains          = 4,
                     parallel_chains = 4,
-                    iter_warmup     = 1500,
-                    iter_sampling   = 1500,
+                    iter_warmup     = 1000,
+                    iter_sampling   = 1000,
                     adapt_delta     = 0.99,
                     max_treedepth   = 20,
                     refresh         = 5,
@@ -812,7 +812,7 @@ if(!file.exists(file_path)) {
 HMC diagnostics are satisfactory and indicate no pathological behaviour.
 
 ```{r, message = TRUE}
-# We generated this file from $fit$cmdstan_diagnose()
+# We generated this file from fit$cmdstan_diagnose()
 fileName <- file.path(fldr, "diag_2.3.txt")
 
 readChar(fileName, file.info(fileName)$size) %>% 

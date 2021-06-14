@@ -32,12 +32,12 @@ library(purrr)
 library(stringr)
 library(readsdr)
 library(readr)
-library(rstan)
 library(tictoc)
 library(tidybayes)
 library(tidyr)
 
 source("./R/plots.R")
+source("./R/helpers.R") 
 ```
 
 \newpage
@@ -268,7 +268,7 @@ c <- plot_HMC_path(traj_df, posterior_df, q_init, "First 10 iterations")
 
 traj_df <- construct_traj_df(HMC_results, 500, q_init)
 
-d <- plot_HMC_path(traj_df, posterior_df, q_init, "First 500 iterations")
+d <- plot_HMC_path(traj_df, posterior_df, q_init, "First 500 iterations") 
 ```
 
 ```{r, fig.cap = "Parameter space exploration"}
@@ -452,11 +452,14 @@ stan_filepath <- "./Stan_files/example/flu_poisson.stan"
 n_iters <- c(1e2, 2e2, 5e2, 1e3, 1.5e3, 2e3)
 seeds   <- c(409198311,87064581, 696684459, 817963518, 411110113, 897071894)
 
-map2(n_iters, seeds, function(n_iter, seed) {
-  file_path <- str_glue("./backup_objs/Comparison/MCMC_HMC/{n_iter}.rds")
-  cmd_path  <- str_glue("./backup_objs/Comparison/MCMC_HMC/{n_iter}_cmdstan.rds") 
+fldr    <- "./backup_objs/Comparison/MCMC_HMC"
 
-  if(!file.exists(file_path) | !file.exists(cmd_path)) {
+map2(n_iters, seeds, function(n_iter, seed) {
+  file_name  <- str_glue("{n_iter}.rds")
+  file_path  <- file.path(fldr, file_name)
+  
+
+  if(!file.exists(file_path)) {
     
     tic.clearlog()
     tic()
@@ -477,31 +480,19 @@ map2(n_iters, seeds, function(n_iter, seed) {
                       iter_warmup     = n_iter,
                       iter_sampling   = n_iter,
                       refresh         = 5,
-                      save_warmup     = FALSE)
+                      save_warmup     = FALSE,
+                      output_dir      = fldr)
 
     toc(quiet = FALSE, log = TRUE)
     
     log.lst <- tic.log(format = FALSE)
     
-    fit$save_object(cmd_path)
+    result_obj <- list(fit  = fit,
+                       time = log.lst)
     
-    stan_output <- read_stan_csv(fit$output_files())
-    
-    stan_list <- list(time     = log.lst,
-                     stan_obj = stan_output) 
-    
-    saveRDS(stan_list, file_path)
-    
-    result_obj <- list(fit      = fit,
-                       time     = log.lst,
-                       stan_obj = stan_output)
+    saveRDS(result_obj, file_path)
   } else {
-    stan_list <- readRDS(file_path)
-    fit       <- readRDS(cmd_path)
-    
-    result_obj <- list(fit      = fit,
-                       time     = stan_list$time,
-                       stan_obj = stan_list$stan_obj)
+    result_obj <- readRDS(file_path)
   }
   
   result_obj
@@ -509,16 +500,14 @@ map2(n_iters, seeds, function(n_iter, seed) {
 ```
 
 ```{r}
-fit_objs       <- map(HMC_sens, "fit")
-sf_objs        <- map(HMC_sens, "stan_obj")
-
+fit_objs        <- map(HMC_sens, "fit")
 names(fit_objs) <- n_iters
-names(sf_objs)  <- n_iters
+
 ```
 
 ```{r}
-map(sf_objs, function(sf_obj) {
-  mcmc_trace(sf_obj, pars = unk_pars,
+map(fit_objs , function(fit_obj) {
+  mcmc_trace(fit_obj$draws(), pars = unk_pars,
              facet_args = list(labeller = label_parsed)) +
     labs(title = "HMC")
 }) -> HMC_traces
@@ -634,7 +623,7 @@ imap_dfr(posterior_list, function(df, n_iter) {
       as.matrix() -> chain_matrix
     
       data.frame(par        = par, 
-                   rhat     = Rhat(chain_matrix),
+                   rhat     = rhat(chain_matrix),
                    ess_bulk = ess_bulk(chain_matrix),
                    ess_tail = ess_tail(chain_matrix),
                    n_iter   = n_iter)
@@ -650,7 +639,7 @@ imap_dfr(fit_objs, function(fit_object, n_iter) {
       chain_matrix <- extract_variable_matrix(fit_object$draws(), par)
       
       data.frame(par      = par, 
-                   rhat     = Rhat(chain_matrix),
+                   rhat     = rhat(chain_matrix),
                    ess_bulk = ess_bulk(chain_matrix),
                    ess_tail = ess_tail(chain_matrix),
                    n_iter   = n_iter)
