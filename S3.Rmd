@@ -283,7 +283,7 @@ if(!file.exists(file_path)) {
                     iter_warmup     = 1000,
                     iter_sampling   = 1000,
                     refresh         = 5,
-                    save_warmup     = TRUE,
+                    save_warmup     = FALSE,
                     output_dir      = fldr)
 
   fit$save_object(file_path)
@@ -303,7 +303,12 @@ HMC diagnostics are satisfactory and indicate no pathological behaviour.
 # We generated this file from $fit$cmdstan_diagnose()
 fileName <- file.path(fldr, "diag_1.txt")
 
-readChar(fileName, file.info(fileName)$size) %>% cat()
+if(!file.exists(fileName)) {
+  diagnosis <- fit$cmdstan_diagnose()
+  writeLines(diagnosis$stdout, fileName)
+} else {
+  readChar(fileName, file.info(fileName)$size) %>% cat()
+}
 ```
 
 
@@ -323,7 +328,7 @@ mcmc_trace(fit$draws(), pars_hat)
 \hfill
 
 Finally, $\widehat{R}$ and $ESS_{bulk}$ are within the predetermined 
-thresholds (< 1.05 and > 400, respectively). Based on all of these diagnostics,
+thresholds (< 1.01 and > 400, respectively). Based on all of these diagnostics,
 we *accept the computation* and move to the *posterior predictive checking *
 stage. 
 
@@ -352,7 +357,7 @@ kable(smy_df, booktab = TRUE, escape = FALSE)
 
 However, when we compare the model's fit against the data (Figure 4), we observe
 that the estimated trajectories overestimate the actual behaviour. Assuming no 
-underreporting and no previous recovered individuals produces an inadequate
+underreporting and no previous recovered individuals produce an inadequate
 explanation of the observed data. In other words, it does not pass the stringent
 validity test of model calibration. For this reason, we deem the model 
 *not trustworthy*. 
@@ -558,7 +563,7 @@ if(!file.exists(file_path)) {
                     iter_warmup     = 1000,
                     iter_sampling   = 1000,
                     refresh         = 5,
-                    save_warmup     = TRUE,
+                    save_warmup     = FALSE,
                     output_dir      = fldr)
   
   fit$save_object(file_path)
@@ -579,8 +584,12 @@ pathological behaviour that may lead to biased results.
 # We generated this file from $fit$cmdstan_diagnose()
 fileName <- file.path(fldr, "diag_2.1.txt")
 
-readChar(fileName, file.info(fileName)$size) %>% 
-  cat()
+if(!file.exists(fileName)) {
+  diagnosis <- fit$cmdstan_diagnose()
+  writeLines(diagnosis$stdout, fileName)
+} else {
+  readChar(fileName, file.info(fileName)$size) %>% cat()
+}
 ```
 
 #### Pairs-plot
@@ -611,18 +620,11 @@ mcmc_trace(fit$draws(), pars_hat)
 Upon further inspection (Figure 8), though, we identify the following issues in
 $\beta$'s chains:
 
-- *Chain 2*: Around sample 350, the chain is stuck. The chain around that 
-location (~1.4) is not jumping up and down. On the contrary, it stays there for
-some iterations.
+- *Chain 1*: Between samples 250 and 500, the chain is stuck,
+as it does not exhibit the expected random behaviour (jumping up and down). On the contrary, it stays in a similar location for several iterations.
 
-- *Chain 3*: Around sample 430, the chain is stuck. The chain around that
-point (~0.9) is not jumping up and down. On the contrary, it stays there for
-some iterations.
+- *Chain 2*: At the end of the sampling phase, the chain is stuck. The chain around that point (~1.3) stays for several iterations.
 
-- *Chain 4*: Unlike the other three chains, it describe a different 
-distribution. If we look at the _center_ of the trace plot, we notice that it is 
-different from the other _centers_. Furthermore, the trace plot is narrower than
-the other three chains.
 
 ```{r, fig.height = 3.5, fig.cap = "Case 2.1. Beta's trace plots"}
 beta_draws <- extract_variable_matrix(fit$draws(), "beta") %>% 
@@ -642,11 +644,11 @@ ggplot(beta_draws, aes(x = id, y = value)) +
 
 \hfill
 
-We confirm these findings with $\widehat{R}$ and $ESS_{bulk}$. For two out of
-the four parameters, $\widehat{R}$ is higher than its recommended
-threshold (1.05), indicating that convergence was not achieved. Likewise, no
-$ESS_{bulk}$ is above the 400 threshold. Consequently, we deem the computation 
-as *not valid*.
+We confirm these findings with $\widehat{R}$ and $ESS_{bulk}$. All of the 
+four parameters show $\widehat{R}$ values higher than the recommended threshold
+(1.01), indicating that convergence was not achieved. Likewise, only
+one $ESS_{bulk}$ is above the 400 threshold. Consequently, we deem the 
+computation as *not valid*.
 
 ```{r}
 par_matrices <- lapply(pars_hat, function(par) {
@@ -692,7 +694,7 @@ if(!file.exists(file_path)) {
                     iter_sampling   = 1000,
                     adapt_delta     = 0.99,
                     refresh         = 5,
-                    save_warmup     = TRUE,
+                    save_warmup     = FALSE,
                     output_dir      = fldr)
   
   fit$save_object(file_path)
@@ -709,7 +711,7 @@ By increasing _adapt_delta_, we eliminated the divergent transitions at the cost
 of hitting the maximum treedepth threshold, which unlike divergent transitions
 is not a validity concern but an efficiency indicator. Despite this indicator
 inform us about the complexity of the posterior explored, we could still use
-the samples for further analysis if the converge and efficiency metrics are
+the samples for further analysis if the convergence and efficiency metrics are
 satisfactory.
 
 
@@ -717,8 +719,12 @@ satisfactory.
 # We generated this file from $fit$cmdstan_diagnose()
 fileName <- file.path(fldr, "diag_2.2.txt")
 
-readChar(fileName, file.info(fileName)$size) %>% 
-  cat()
+if(!file.exists(fileName)) {
+  diagnosis <- fit$cmdstan_diagnose()
+  writeLines(diagnosis$stdout, fileName)
+} else {
+  readChar(fileName, file.info(fileName)$size) %>% cat()
+}
 ```
 
 #### Pairs-plot
@@ -750,10 +756,10 @@ mcmc_trace(fit$draws(), pars_hat)
 
 \hfill
 
-$\widehat{R}$ confirms the visual inspection from the trace plots. The chains do
-converge. However, hitting the maximum treedepth affected efficiency. 
-$ESS_{bulk}$ (below 400) indicates that there is no sufficient information to 
-estimate quantities of interest.
+$\widehat{R}$ confirms the visual inspection from the trace plots. That is, the
+chains do converge. However, hitting the maximum treedepth affected efficiency, 
+considering that three (out of four) parameters barely exceeded the acceptable
+threshold (> 400).
 
 ```{r}
 par_matrices <- lapply(pars_hat, function(par) {
@@ -775,9 +781,9 @@ kable(smy_df, booktab = TRUE, escape = FALSE)
 
 ### Third calibration attempt
 
-To address the efficiency issues detected in the previous run, we increase
-in the number of samples from 1,000 to 1,500, and increase the maximum number
-of steps allowed per iteration.
+To guarantee that the effective sample size is well above its acceptable 
+threshold, we increase the maximum number of steps allowed per iteration and we
+double the number of samples in the _warm_up_ and _sampling_ phases.
 
 ```{r, results = 'hide'}
 fldr       <- "./backup_objs/Synthetic_data/Case_2/Case_2.3"
@@ -791,12 +797,12 @@ if(!file.exists(file_path)) {
                     seed            = 638588660,
                     chains          = 4,
                     parallel_chains = 4,
-                    iter_warmup     = 1000,
-                    iter_sampling   = 1000,
+                    iter_warmup     = 2000,
+                    iter_sampling   = 2000,
                     adapt_delta     = 0.99,
                     max_treedepth   = 20,
                     refresh         = 5,
-                    save_warmup     = TRUE,
+                    save_warmup     = FALSE,
                     output_dir      = fldr)
   
   fit$save_object(file_path)
@@ -815,8 +821,12 @@ HMC diagnostics are satisfactory and indicate no pathological behaviour.
 # We generated this file from fit$cmdstan_diagnose()
 fileName <- file.path(fldr, "diag_2.3.txt")
 
-readChar(fileName, file.info(fileName)$size) %>% 
-  cat()
+if(!file.exists(fileName)) {
+  diagnosis <- fit$cmdstan_diagnose()
+  writeLines(diagnosis$stdout, fileName)
+} else {
+  readChar(fileName, file.info(fileName)$size) %>% cat()
+}
 ```
 
 #### Trace plots
@@ -835,7 +845,7 @@ mcmc_trace(fit$draws(), pars_hat)
 \hfill
 
 $\widehat{R}$ and $ESS_{bulk}$ are within the predetermined thresholds
-(< 1.05 and > 400, respectively). Based on all of these diagnostics,
+(< 1.01 and > 400, respectively). Based on all of these diagnostics,
 we *accept the computation* and move forward to the
 *posterior predictive checking * stage. 
 
@@ -875,7 +885,7 @@ plot_ts_fit(posterior_df, actual_df)
 
 ### Parameter estimations
 
-Before estimating marginal posterior uncertainty intervals, it is good practice
+Before estimating marginal posterior uncertainty intervals, it is recommended
 to check for the correlations among parameters (Figure 13). Here, we can 
 appreciate this model's complexity by looking at the large degree of 
 correlations in this parameter space.
@@ -1025,7 +1035,7 @@ fit <- mod$sample(data            = stan_d,
                   iter_warmup     = 1000,
                   iter_sampling   = 1000,
                   refresh         = 5,
-                  save_warmup     = TRUE,
+                  save_warmup     = FALSE,
                   output_dir      = fldr)
 
   fit$save_object(file_path)
@@ -1045,7 +1055,12 @@ HMC diagnostics are satisfactory and indicate no pathological behaviour.
 # We generated this file from $fit$cmdstan_diagnose()
 fileName <- file.path(fldr, "diag_3.txt")
 
-readChar(fileName, file.info(fileName)$size) %>% cat()
+if(!file.exists(fileName)) {
+  diagnosis <- fit$cmdstan_diagnose()
+  writeLines(diagnosis$stdout, fileName)
+} else {
+  readChar(fileName, file.info(fileName)$size) %>% cat()
+}
 ```
 
 ### Trace plot
@@ -1064,7 +1079,7 @@ mcmc_trace(fit$draws(), pars_hat)
 \hfill
 
 $\widehat{R}$ and $ESS_{bulk}$ are within the predetermined thresholds
-(< 1.05 and > 400, respectively). Based on all of these diagnostics,
+(< 1.01 and > 400, respectively). Based on all of these diagnostics,
 we *accept the computation* and move to the *posterior predictive checking *
 stage. 
 
