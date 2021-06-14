@@ -477,13 +477,14 @@ ggsave("./plots/A_traceplot.pdf", plot = a + b, dpi = "print", height = 3,
 
 \hfill
 
-$\widehat{R}$ is a convergence diagnostic [@Vehtari_2021], which compares the 
-between- and within-chain estimates for model parameters and other univariate 
-quantities of interest. If chains have not mixed well, R-hat is larger than 1. 
-It is recommended running at least *four chains* by default and only using the 
-sample if R-hat is less than 1.05. **Stan reports R-hat which is the maximum of 
-rank normalized split-R-hat and rank normalized folded-split-R-hat, which works 
-for thick tailed distributions and is sensitive also to differences in scale**.
+$\widehat{R}$ is a convergence diagnostic, which compares the between- and 
+within-chain estimates for model parameters and other univariate quantities of
+interest. If chains have not mixed well, R-hat is larger than 1. It is 
+recommended running at least *four chains* by default and only using the sample
+if R-hat is less than 1.01 [@Vehtari_2021]. **Stan reports R-hat which is the
+maximum of rank normalized split-R-hat and rank normalized folded-split-R-hat,
+which works for thick tailed distributions and is sensitive also to differences 
+in scale**.
 
 For each parameter $\theta$, we split each chain from the *sampling phase* in 
 two halves. That is, from 4 chains of 1000 draws each one, we obtain 8 split
