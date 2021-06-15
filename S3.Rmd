@@ -161,6 +161,7 @@ the results below, we *accept the prior*, and proceed to fit the model.
 
 ```{r case_1_prior_pred_checks}
 fldr      <- "./backup_objs/Synthetic_data/Case_1"
+dir.create(fldr, showWarnings = FALSE, recursive = TRUE)
 file_path <- file.path(fldr, "prior_sims.rds")
 
 if(!file.exists(file_path)) {
@@ -257,13 +258,18 @@ stan_model <- paste(
 stan_text   <- paste(stan_fun, stan_data, stan_params,
                        stan_tp, stan_model, sep = "\n")
 
-stan_filepath <- "./Stan_files/Synthetic_data/Case_1.stan"
+stan_flr    <- "./Stan_files/Synthetic_data"
+
+dir.create(stan_fldr, showWarnings = FALSE, recursive = TRUE)
+
+stan_filepath <- file.path(stan_fldr, "Case_1.stan")
 
 create_stan_file(stan_text, stan_filepath)
 ```
 
 ```{r fit_case_1, results = 'hide'}
 fldr       <- "./backup_objs/Synthetic_data/Case_1"
+dir.create(fldr, showWarnings = FALSE, recursive = TRUE)
 file_path  <- file.path(fldr, "Case_1.rds")
 
 if(!file.exists(file_path)) {
@@ -419,6 +425,7 @@ on the results below, we *accept the prior*, and proceed to fit the model.
 
 ```{r case_2_prior_pred_checks}
 fldr      <- "./backup_objs/Synthetic_data/Case_2"
+dir.create(fldr, showWarnings = FALSE, recursive = TRUE)
 file_path <- file.path(fldr, "prior_sims.rds")
 
 if(!file.exists(file_path)) {
@@ -550,6 +557,7 @@ to each phase (_warm-up_ and _sampling_).
 
 ```{r, results = 'hide'}
 fldr       <- "./backup_objs/Synthetic_data/Case_2/Case_2.1"
+dir.create(fldr, showWarnings = FALSE, recursive = TRUE)
 file_path  <- file.path(fldr, "Case_2.1.rds")
 
 if(!file.exists(file_path)) {
@@ -680,6 +688,7 @@ re-run the sampling process.
 
 ```{r, results = 'hide'}
 fldr       <- "./backup_objs/Synthetic_data/Case_2/Case_2.2"
+dir.create(fldr, showWarnings = FALSE, recursive = TRUE)
 file_path  <- file.path(fldr, "Case_2.2.rds")
 
 if(!file.exists(file_path)) {
@@ -787,6 +796,7 @@ double the number of samples in the _warm_up_ and _sampling_ phases.
 
 ```{r, results = 'hide'}
 fldr       <- "./backup_objs/Synthetic_data/Case_2/Case_2.3"
+dir.create(fldr, showWarnings = FALSE, recursive = TRUE)
 file_path  <- file.path(fldr, "Case_2.3.rds")
 
 if(!file.exists(file_path)) {
@@ -958,6 +968,7 @@ on the results (Figure 14), we *accept the prior*, and proceed to fit the model.
 
 ```{r case_3_prior_pred_checks}
 fldr      <- "./backup_objs/Synthetic_data/Case_3"
+dir.create(fldr, showWarnings = FALSE, recursive = TRUE)
 file_path <- file.path(fldr, "prior_sims.rds")
 
 if(!file.exists(file_path)) {
@@ -1016,6 +1027,7 @@ stan_filepath <- "./Stan_files/example/flu_poisson.stan"
 
 ```{r case_3_run, results = 'hide'}
 fldr       <- "./backup_objs/Synthetic_data/Case_3"
+dir.create(fldr, showWarnings = FALSE, recursive = TRUE)
 file_path  <- file.path(fldr, "Case_3.rds")
 
 if(!file.exists(file_path)) {
