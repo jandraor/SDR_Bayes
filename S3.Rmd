@@ -258,7 +258,7 @@ stan_model <- paste(
 stan_text   <- paste(stan_fun, stan_data, stan_params,
                        stan_tp, stan_model, sep = "\n")
 
-stan_flr    <- "./Stan_files/Synthetic_data"
+stan_fldr     <- "./Stan_files/Synthetic_data"
 
 dir.create(stan_fldr, showWarnings = FALSE, recursive = TRUE)
 
