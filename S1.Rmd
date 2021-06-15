@@ -447,8 +447,12 @@ intuitive interpretations of these metrics.
 # We generated this file from $fit$cmdstan_diagnose()
 fileName <- file.path(fldr, "diags.txt")
 
-readChar(fileName, file.info(fileName)$size) %>% 
-  cat()
+if(!file.exists(fileName)) {
+  diagnosis <- fit$cmdstan_diagnose()
+  writeLines(diagnosis$stdout, fileName)
+} else {
+  readChar(fileName, file.info(fileName)$size) %>% cat()
+}
 ```
 
 
