@@ -385,7 +385,7 @@ n_iters <- c(1e2, 2e2, 5e2, 1e3, 1.5e3, 2e3)
 seeds   <- c(409198311,87064581, 696684459, 817963518, 411110113, 897071894)
 
 fldr <- "./backup_objs/Comparison/MCMC_RWM"
-dir.create(fldr, showWarnings = FALSE)
+dir.create(fldr, showWarnings = FALSE, recursive = TRUE)
 
 map2(n_iters, seeds, function(n_iter, seed) {
   
@@ -457,7 +457,7 @@ n_iters <- c(1e2, 2e2, 5e2, 1e3, 1.5e3, 2e3)
 seeds   <- c(409198311,87064581, 696684459, 817963518, 411110113, 897071894)
 
 fldr    <- "./backup_objs/Comparison/MCMC_HMC"
-dir.create(fldr, showWarnings = FALSE)
+dir.create(fldr, showWarnings = FALSE, recursive = TRUE)
 
 map2(n_iters, seeds, function(n_iter, seed) {
   file_name  <- str_glue("{n_iter}.rds")

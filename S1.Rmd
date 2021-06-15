@@ -403,7 +403,7 @@ for the SD model, the number of stocks (_n_difeq_), the simulation time and the
 Cumberland data.
 
 ```{r fit_norm, results = 'hide'}
-fldr      <- "./backup_objs/main_text/"
+fldr      <- "./backup_objs/main_text"
 file_path <- file.path(fldr, "fit.rds")
 
 if(!file.exists(file_path)) {
