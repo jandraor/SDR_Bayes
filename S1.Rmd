@@ -176,6 +176,7 @@ file_path <- file.path(fldr, "prior_sims.rds")
 
 n_sims     <- 500
 pop_size   <- 5234
+R0         <- round(5234 * 0.3, 0)  # Initial value for the recovered stock
 const_list <- list(N = pop_size, sigma = 0.5, par_gamma = 0.5)
 filepath   <- "./models/SEIR.stmx"
 mdl        <- read_xmile(filepath, const_list = const_list)
@@ -189,7 +190,7 @@ if(!file.exists(file_path)) {
   
   consts_df  <- data.frame(par_beta  = beta_sims,
                            rho       = rho_sims)
-  R0         <- round(5234 * 0.3, 0)  # Initial value for the recovered stock
+  
   stocks_df  <- data.frame(S = pop_size - R0 - I_0_sims,
                            I = I_0_sims,
                            C = I_0_sims)
