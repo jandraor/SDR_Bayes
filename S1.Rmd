@@ -47,7 +47,7 @@ source("./R/incidence_comparison.R")
 
 # Backup folder
 fldr <- "./backup_objs/main_text"
-dir.create(fldr, showWarnings = FALSE)
+dir.create(fldr, showWarnings = FALSE, recursive = TRUE)
 ```
 
 # Data
@@ -384,7 +384,7 @@ stan_text   <- paste(stan_fun, stan_data, stan_params,
                        stan_tp, stan_model, sep = "\n")
 
 stan_fldr     <- "./Stan_files/example"
-dir.create(stan_fldr, showWarnings = FALSE)  
+dir.create(stan_fldr, showWarnings = FALSE, recursive = TRUE)  
 stan_filepath <- file.path(stan_fldr, "flu_poisson.stan")
 
 create_stan_file(stan_text, stan_filepath)
