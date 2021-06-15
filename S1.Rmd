@@ -46,7 +46,7 @@ source("./R/plots.R")
 source("./R/incidence_comparison.R")
 
 # Backup folder
-fldr <- "./backup_objs/main_text/"
+fldr <- "./backup_objs/main_text"
 dir.create(fldr, showWarnings = FALSE)
 ```
 
