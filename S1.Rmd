@@ -52,8 +52,8 @@ dir.create(fldr, showWarnings = FALSE, recursive = TRUE)
 
 # Data
 
-Drawing on the *Tidyverse* (readr, dplyr, lubridate), we read the csv file that
-contains the incidence data and transform it into a format suitable for the
+Drawing on the *Tidyverse* (readr, dplyr, lubridate), we read the _csv_ file 
+that contains the incidence data and transform it into a format suitable for the
 analysis. 
 
 ```{r, echo = TRUE, fig.height = 3.5}
@@ -66,7 +66,7 @@ flu_data <- read_csv("./data/Cumberland_data_1918.csv") %>%
 
 ## Daily data
 
-In this graph and the remaining figures, *ggplot2* provides the framework for
+For this graph and the remaining figures, *ggplot2* provides the framework for
 creating visualisations. Here, we show the number of new flu cases in Cumberland
 (Maryland) between September and October 1918.
 
@@ -81,7 +81,7 @@ print(g)
 ```
 
 ```{r, echo = FALSE}
-ggsave("./plots/A_incidence_report.pdf", plot = g, dpi = "print", height = 5, 
+ggsave("./plots/Fig1_incidence_report.pdf", plot = g, dpi = "print", height = 5, 
        width = 8)
 ```
 
@@ -106,10 +106,10 @@ ggplot(weekly_data, aes(x = time, y = y)) +
 ## Prior information - $\pi(\theta)$
 
 The following list corresponds to the time-independent variables and initial
-conditions of the SEIR model that will be fitted to the Cumberland data. To
-each parameter, we indicate their prior knowledge. For parameters for which we
-cannot obtain direct estimates, we construct prior distributions and present 
-them in a density plot.
+conditions of the SEIR model that will be fitted to the Cumberland data. For
+each parameter, we indicate their prior knowledge. We construct prior
+distributions for parameters for which we cannot obtain direct estimates and 
+present them in a density plot.
 
 * Recovery rate: $\gamma$ = 1 / 2 [1 / day]
 
@@ -160,7 +160,7 @@ print(g)
 ```
 
 ```{r, echo = FALSE}
-ggsave("./plots/A_prior_dist.pdf", dpi = "print", height = 3, width = 7)
+ggsave("./plots/Fig3_Prior_distribution.pdf", dpi = "print", height = 3, width = 7)
 ```
 
 ## Prior predictive checks
@@ -169,7 +169,7 @@ Here, we incorporate the SEIR model built in Stella. We parse the XML code to
 R using the function **read_xmile** from the *readsdr* package. Then, we
 draw 500 samples from the prior distribution and simulate the model with these
 inputs. Given the computational burden of this process, we save the results
-in a RDS file.
+in an RDS file.
 
 ```{r}
 file_path <- file.path(fldr, "prior_sims.rds")
@@ -251,42 +251,42 @@ print(g2)
 ```{r, echo = FALSE}
 g <- g1 / g2
 
-ggsave("./plots/A_prior_predictive_checks.pdf", plot = g, dpi = "print", 
+ggsave("./plots/Fig4_prior_predictive_checks.pdf", plot = g, dpi = "print", 
        height = 5, width = 7)
 ```
 
 ### Measurement model
 
-In this section, we discuss the choice of the measurement model, and how we 
+In this section, we discuss the choice of the measurement model and how we 
 use prior predictive checks to guide such a decision. Initially, we opt for the
-default choice, i.e. the normal distribution. This choice implies that, at every
-time step, the difference between the measurement from the true value (error) 
-follows a normal distribution. In addition this, this distributions entails that
-the error across all time steps is equal (homoscedasticity). In other words,  
-the magnitude of the error is indifferent from the magnitude of the true 
+default choice, i.e., the normal distribution. This choice implies that, at 
+every time step, the difference between the measurement and the true value
+(error) follows a normal distribution. Additionally, this distribution entails 
+that the error across all time steps is similar (homoscedasticity). In other 
+words, the magnitude of the error is indifferent to the magnitude of the true 
 value, an assumption that may seem unrealistic. As could be expected, the 
 normal distribution adds a new unknown, the standard deviation ($\delta$). To 
 test this model, we assume $\delta \sim Cauchy(0,1)$, and simulate 500
 trajectories. We notice that this configuration yields continuous unconstrained
-values, in contrast to the discrete non-negative measurements. These 
+values, in contrast to Cumberland's discrete non-negative measurements. These 
 dissimilitudes hint that more suitable specifications should be found.
 
 Next, we consider the Poisson distribution given that it has been used in the
 empirical treatment of count data, particularly concerning counts of events per 
 unit of time. This distribution lifts the constraint of equal variance across
-measurements as the magnitude of the error is proportional to the measured 
-quantity's magnitude. In this example, the true number of reported individuals.
-As with the normal distribution, we generate 500 simulations. As we saw in the
-previous section, the Poisson model captures adequately the given data.
+measurements as the error magnitude is proportional to the true number of 
+reported individuals at each time step. As with the normal distribution, we 
+generate 500 simulations. As we saw above, the Poisson model adequately captures
+the given data.
 
 Finally, to count data, the Negative Binomial distribution is an alternative to
-the Poisson should the latter fails to capture overdispersion the data. We model
-such overdispersion in the Negative Binomial's scale parameter
-($\phi \sim \operatorname{Half-normal}(0,1)$). We can see that the trajectories
+the Poisson should the latter fail to capture overdispersion in the data. We 
+model such overdispersion in the Negative Binomial's scale parameter
+($\phi \sim \operatorname{Half-normal}(0,1)$). We can see that the trajectories 
 generated by the Negative Binomial are more dispersed than the ones produced by
-the Poisson distribution. Nevertheless, in this case, they do not represent
-more accurately the data, so that we adopt the Poisson distribution as the
-measurement model.
+the Poisson distribution. Nevertheless, in this case, they do not provide a more
+accurate representation of the data. Consequently, we adopt the Poisson
+distribution as the measurement model.
 
 
 ```{r, fig.height = 6}
@@ -322,12 +322,13 @@ print(n1)
 
 For calibrating SD models in Stan, it is necessary to create a file written in
 Stan's own language. This kind of file structures the code in blocks. For this
-example, five blocks are necessary: Functions, data, parameters, transformed
-parameters and model. Here model refers to the measurement model (prior and
-likelihood). The SD model is considered a function, which can be constructed 
-from the Stella file. This is possible thanks to the function 
-*stan_ode_function* from the *readsdr* package. Similarly, *readsdr* supports
-the creation of the data block. The other blocks must be built manually. 
+example, five blocks are necessary: _Functions_, _data_, _parameters_, 
+_transformed parameters_, and _model_. Here model refers to prior distributions
+and the likelihood (measurement model). The SD model is considered a function,
+which can be constructed from the Stella file. This translation is possible
+thanks to the function *stan_ode_function* from the *readsdr* package.
+Similarly, *readsdr* supports the creation of the data block. The other blocks
+must be built manually. 
 
 ```{r}
 pars_hat  <- c("I0", "rho", "beta")
@@ -399,9 +400,9 @@ cat(stan_text)
 
 To perform the calibration via HMC, we must provide Stan with the calibration
 parameters. We specify 2,000 iterations (1,000 for warming-up and 1,000 for 
-sampling), and 4 chains. We also supply the number of parameters to be fitted
-for the SD model, the number of stocks (_n_difeq_), the simulation time and the
-Cumberland data.
+sampling) and four chains. We also supply the number of parameters to be fitted
+for the SD model, the number of stocks (_n_difeq_), the simulation time, and
+Cumberland's data.
 
 ```{r fit_norm, results = 'hide'}
 fldr      <- "./backup_objs/main_text"
@@ -435,11 +436,11 @@ fit$save_object(file_path)
 
 ### Diagnostics
 
-Before inspecting the samples, Stan provides global diagnostics to the user 
+Before inspecting the samples, Stan returns global diagnostics to the user 
 about the sampling process. It is expected that the result is free from
 divergent iterations or indications of pathological behaviour from the
 Bayesian Fraction of Missing Information metric. Also, iterations that
-saturate the maximum tree depth indicate a complex likelihood surface. The 
+saturate the maximum tree depth indicate a complex posterior surface. The 
 [Stan manual](https://mc-stan.org/misc/warnings.html#runtime-warnings) provides
 intuitive interpretations of these metrics.
 
@@ -477,26 +478,26 @@ print(a + b)
 ```
 
 ```{r, echo = FALSE}
-ggsave("./plots/A_traceplot.pdf", plot = a + b, dpi = "print", height = 3, 
+ggsave("./plots/Fig5_traceplot.pdf", plot = a + b, dpi = "print", height = 3, 
        width = 8)
 ```
 
-#### Potential reduction factor ($\widehat{R}$) & Effective Sample Size ($\hat{n}_{eff}$)  
+#### Potential scale reduction factor ($\widehat{R}$) & Effective Sample Size ($\hat{n}_{eff}$)  
 
 \hfill
 
 $\widehat{R}$ is a convergence diagnostic, which compares the between- and 
 within-chain estimates for model parameters and other univariate quantities of
 interest. If chains have not mixed well, R-hat is larger than 1. It is 
-recommended running at least *four chains* by default and only using the sample
-if R-hat is less than 1.01 [@Vehtari_2021]. **Stan reports R-hat which is the
+recommended to run at least *four chains* by default and only using the sample
+if R-hat is less than 1.01 [@Vehtari_2021]. **Stan reports R-hat, which is the
 maximum of rank normalized split-R-hat and rank normalized folded-split-R-hat,
-which works for thick tailed distributions and is sensitive also to differences 
+which works for thick-tailed distributions and is sensitive also to differences 
 in scale**.
 
 For each parameter $\theta$, we split each chain from the *sampling phase* in 
-two halves. That is, from 4 chains of 1000 draws each one, we obtain 8 split
-chains of 500 draws each one. Then, we label the simulations as 
+two halves. That is, from **four** chains of 1000 draws each one, we obtain
+**eight** split chains of 500 draws each one. Then, we label the simulations as 
 $\theta_{ij} (i = 1, . . . , N; j = 1, . . . , M)$, where $N$ is the number of 
 samples per split chain, $M$ is the number of split chains, and $S = NM$ is the
 total number of draws from all chains. We subsequently transform these 
@@ -510,7 +511,7 @@ z_{ij} = \Phi^{-1}\left(\frac{r_{ij} - 3/8}{S - 1/4}\right)
 \end{equation}
 
 Using these normal scores, we calculate $\widehat{R}$ following the formulation
-proposed by [@gelman2013bayesian]. Initially, we compute $B$ and $W$ , the 
+proposed by @gelman2013bayesian. Initially, we compute $B$ and $W$ , the 
 between- and within-sequence variances, respectively:
 
 \begin{equation}
@@ -568,9 +569,9 @@ V_t = \frac{1}{M(N - t)} \sum_{j=1}^{M}\sum_{i=t+1}^{N}(z_{i,j} - z_{i -t, j})^2
 
 We use the term *bulk effective sample size* to refer to the effective sample 
 size based on the rank normalized draws. To ensure reliable estimates of 
-variances and autocorrelations needed for $\hat{R}$ and $\hat{n}_{eff}$, @Vehtari_2021 
-recommend that the rank-normalized effecive sample size must be greater than 400
-(100 per chain).
+variances and autocorrelations needed for $\hat{R}$ and $\hat{n}_{eff}$, 
+@Vehtari_2021 recommend that the rank-normalized effective sample size must be
+greater than 400 (100 per chain).
 
 
 ```{r}
@@ -598,15 +599,12 @@ kable(smy_df, booktab = TRUE)
 \hfill
 
 Once the computation has been deemed satisfactory, we subsequently check that
-the deterministic model captures the underlying trajectory of the data. In this
-case, the trajectory corresponds to the **unobserved** expected reported
-incidence, and in turn to the expected value of the model. Accordingly, we 
-evaluate the predicted *expected* reported incidences from the calibration
-process. Take into account that in each sampling iteration, Stan simulates a 
-expected incidence trajectory. We compare these simulated trajectories against 
-the measured incidence(dots) to visually examine whether the trend is consistent 
-with the data. The solid blue line denotes the mean trajectory and the grey
-shaded area indicates the 95 % credible interval.
+the model's expected value captures the underlying trajectory of the data.
+The reader should take into account that in each sampling iteration, Stan 
+generates a trajectory from the SD model. We compare these simulated time series
+against the measured incidence (dots) to visually examine whether the trend is 
+consistent  with the data. The solid blue line denotes the mean trajectory, and 
+the grey shaded area indicates the 95 % credible interval.
 
 ```{r, fig.height = 3.5}
 posterior_df <- fit$draws() %>% as_draws_df()
@@ -657,10 +655,10 @@ ggplot(weekly_sum, aes(x = time, y = y)) +
 
 \hfill
 
-One important goal of model calibration is to gain information from the data
-about the parameters of interest. One way to accomplish such purpose is by
-comparing marginal prior and marginal posterior distributions. Namely, we 
-evaluate the knowledge acquired from the process.
+A critical goal of model calibration is to gain information from the data
+about the parameters of interest. One way to accomplish such a purpose is 
+through the comparison of marginal prior and marginal posterior distributions. 
+Namely, we evaluate the knowledge acquired from the process.
 
 ```{r, fig.height = 3}
 pars_df <- posterior_df[, c("beta", "rho", "I0")]
@@ -668,7 +666,7 @@ g       <- prior_posterior_plot(pars_df)
 ```
 
 ```{r, echo = FALSE}
-ggsave("./plots/A_prior_pos_comparison.pdf",plot = g, dpi = "print", 
+ggsave("./plots/Fig6_prior_posterior_comparison.pdf",plot = g, dpi = "print", 
        height = 3, 
        width = 7)
 ```
@@ -678,20 +676,20 @@ ggsave("./plots/A_prior_pos_comparison.pdf",plot = g, dpi = "print",
 
 \hfill
 
-This plot evaluates parameter interactions or joint distributions. The lower 
-triangular shows heat maps of the concentration of values in the x-y plane among
-all possible parameter pairs. The upper triangular quantifies such interactions 
-by the correlation coefficients. The diagonal displays marginal posterior 
-distributions.
+This plot helps us evaluate parameter interactions or joint distributions. The 
+lower triangular shows, through heat maps, the concentration of values in the
+x-y plane among all possible parameter pairs. The upper triangular quantifies
+such interactions by the correlation coefficients. The diagonal displays
+marginal posterior distributions.
 
 ```{r}
-g <- pairs_posterior(pars_df, strip_text = 10)
+g <- pairs_posterior(pars_df, strip_text = 10, axis_text_size = 8)
 print(g)
 ```
 
 
 ```{r, echo = FALSE}
-ggsave("./plots/A_pairs_plot.pdf", plot = g, dpi = "print", height = 4, 
+ggsave("./plots/Fig7_pairs_plot.pdf", plot = g, dpi = "print", height = 4, 
        width = 8)
 ```
 
@@ -699,16 +697,16 @@ ggsave("./plots/A_pairs_plot.pdf", plot = g, dpi = "print", height = 4,
 
 \hfill
 
-The other main goal of model calibration is related to the argument that it is a
-stringent validity test of SD models. Simply put, we ask "Is the structure
-capable of generating an approximation of the historical behavior?". To answer
-this question, we draw 500 samples from the posterior distribution that serve as
-inputs to the SD model. Unlike the check for the deterministic fit, this step
-includes the measurement error, which we assumed was Poisson distributed. Thus,
-we insert the expected reported incidences into the Poisson distribution to
-predict measured incidences. In A), we show the 500 predicted measurements and
-the actual data (dots). The dotted line indicates the expected reported incidence.
-In B), we show three examples of the predicted measurements. 
+The other main goal of model calibration is related to the argument that this
+procedure is a stringent validity test of SD models. Simply put, we ask, "Is the
+structure capable of generating an approximation of the historical behavior?". 
+To answer this question, we draw 500 samples from the posterior distribution 
+that serve as inputs to the SD model. Unlike the check for the deterministic 
+fit, this step includes the measurement error, which we assumed was Poisson 
+distributed. Thus, we insert the expected reported incidences into the Poisson distribution to predict measured incidences. In A), we show the 500 predicted 
+measurements and the actual data (dots). The dotted line indicates the expected
+reported incidence. In B), we present three examples of the predicted
+measurements. 
 
 ```{r}
 file_path <- file.path(fldr, "posterior_sims.rds")
@@ -772,8 +770,8 @@ print(g)
 ```
 
 ```{r, echo = FALSE}
-ggsave("./plots/A_ppc.pdf", plot = g, dpi = "print", height = 5, 
-       width = 8)
+ggsave("./plots/Fig8_Posterior_predictive_checks.pdf", plot = g, dpi = "print",
+       height = 5, width = 8)
 ```
 
 
@@ -784,10 +782,10 @@ ggsave("./plots/A_ppc.pdf", plot = g, dpi = "print", height = 5,
 This definition is taken from [Hyndman(2006)](https://robjhyndman.com/papers/foresight.pdf):
 
 *The MASE was proposed by Hyndman and Koehler (2006) as a generally applicable
-measurement of forecast accuracy. They proposed  scaling  the  errors  based  on
-the  in-sample Mean Absolute Error (MAE) from  the  naïve  forecast  method. 
-Using  the  naïve  method, we generate one-period-ahead forecasts from each data
-point in the sample. Accordingly, a scaled error is defined as:*
+measurement of forecast accuracy. They proposed scaling the errors based on the
+in-sample Mean Absolute Error (MAE) from the naïve forecast method. Using the
+naïve method, we generate one-period-ahead forecasts from each data point in the
+sample. Accordingly, a scaled error is defined as:*
 
 \begin{equation}
  q_t = \frac{e_t}{\frac{1}{n-1} \sum\limits_{i=2}^n |y_i - y_{i-1}|}
@@ -806,10 +804,10 @@ Thus, the mean absolute scaled error is:
  MASE = mean(|q_t|)
 \end{equation}
 
-This is a scale-independent metric defined if there are zero values. A scaled
-error  is  less  than  one  if  it  arises  from  a  better  forecast than
-the  naïve  forecast. Conversely, it is greater than one if the forecasts
-worse  than  the  average  one-step,  naïve  forecast computed  in-sample.
+MASE is a scale-independent metric defined if there are zero values. A scaled
+error is less than one if it arises from a better forecast than the naïve 
+forecast. Conversely, it is greater than one if the forecasts worse than the
+average one-step, naïve forecast computed in-sample.
 
 Based on the above, we estimate the MASE for each simulated trajectory and 
 present its distribution.
@@ -834,11 +832,11 @@ print(g2)
 
 # Forecast
 
-Finally, we use the posterior distribution to simulate two hypothetical 
+Finally, we use the posterior distribution to run two hypothetical 
 scenarios (Unmitigated and Intervention). Thus, we simulate 500 trajectories
 for each scenario. We also evaluate the effect of assuming perfect independence
-among parameters (500 simulations per scenario). In total, we simulate 2,000
-trajectories.
+among parameters (500 simulations per scenario). In total, we obtain 2,000
+time series.
 
 ```{r}
 file_path <- file.path(fldr, "forecast.rds")
@@ -896,7 +894,7 @@ ggplot(summary_forecast, aes(x = time)) +
 ```
 
 ```{r, echo = FALSE}
-ggsave("./plots/A_prediction.pdf", dpi = "print", height = 5, 
+ggsave("./plots/Fig9_prediction.pdf", dpi = "print", height = 5, 
        width = 8)
 ```
 

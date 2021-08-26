@@ -6,7 +6,7 @@ output:
 urlcolor: blue
 ---
 
-This appendix serves a double purpose. On the one hand, it aims to demonstrate
+This appendix serves a dual purpose. On the one hand, it aims to demonstrate
 the advantages of using fake/synthetic data to diagnose problems in calibration
 algorithms. With synthetic data, we aim to answer: "Is it possible to estimate
 the desired parameters with the available data if we have the correct model?". 
@@ -48,10 +48,10 @@ source("./R/plots.R")
 
 # Synthetic data
 
-We hypothetically received data (Figure 1) from an outbreak of influenza (H1N1)
-in Cumberland, Maryland. This outbreak occurred in 1918, when the population 
+We hypothetically receive data (Figure 1) from an influenza outbreak (H1N1)
+in Cumberland, Maryland. This outbreak occurred in 1918 when the population 
 size was 5234. From previous studies, we estimate the latent and infectious
-periods at 2 days each.
+periods at two days each.
 
 ```{r}
 mdl_path <- "./models/SEIR.stmx"
@@ -110,10 +110,9 @@ ggplot(sim_inc, aes(x = time, y = true_inc)) +
 
 The goal of this exercise is the same as the one described in the main text. In
 particular, we aim to estimate the basic reproduction number ($R_0$). To do so, 
-we fit, through Hamiltonian Monte Carlo, an SEIR model (see equations in
-main text section 2) to the received time-series (incidence data). In doing so,
-we can estimate parameter values that best describe the given data, and from 
-which we can approximate $R_0$.
+we fit, through Hamiltonian Monte Carlo, an SEIR model (see equations in the
+main text) to the incidence data. By doing so, we can estimate parameter values
+that best describe the given data, and from which we can approximate $R_0$.
 
 
 ```{r}
@@ -127,12 +126,10 @@ mase_list <- vector(mode = "list", length = 3)
 
 After formulating a dynamic hypothesis, the next step in a calibration process 
 consists of determining which parameters are fixed within the dynamic structure,
-and which will be estimated using the MCMC algorithm. We start by considering 
-the case where the effective contact rate ($\beta$) and the initial infectious
-($I(0)$) are unknown. Further, we assume that there is no underreporting 
-($\rho = 1$), and that there are no people with previous immunity ($R(0) = 0$).
+and which parameters will be estimated using the MCMC algorithm. We start by 
+considering the case where the effective contact rate ($\beta$) and the initial infectious ($I(0)$) are unknown. Further, we assume that there is no 
+underreporting ($\rho = 1$) and that there is no previous immunity ($R(0) = 0$).
 We adopt the priors described in the main text.
-
 
 
 ### Priors
@@ -157,7 +154,7 @@ kable(df, booktab = TRUE, escape = FALSE)
 ### Prior predictive checks
 
 Then, we check that our prior information captures the data (Figure 2). Based on
-the results below, we *accept the prior*, and proceed to fit the model.
+the results below, we *accept the prior* and proceed to fit the model.
 
 ```{r case_1_prior_pred_checks}
 fldr      <- "./backup_objs/Synthetic_data/Case_1"
@@ -334,8 +331,8 @@ mcmc_trace(fit$draws(), pars_hat)
 \hfill
 
 Finally, $\widehat{R}$ and $ESS_{bulk}$ are within the predetermined 
-thresholds (< 1.01 and > 400, respectively). Based on all of these diagnostics,
-we *accept the computation* and move to the *posterior predictive checking *
+thresholds (< 1.01 and > 400, respectively). Based on these diagnostics,
+we *accept the computation* and move to the *posterior predictive checking* 
 stage. 
 
 \hfill
@@ -363,7 +360,7 @@ kable(smy_df, booktab = TRUE, escape = FALSE)
 
 However, when we compare the model's fit against the data (Figure 4), we observe
 that the estimated trajectories overestimate the actual behaviour. Assuming no 
-underreporting and no previous recovered individuals produce an inadequate
+underreporting and no previous immunity produce an inadequate
 explanation of the observed data. In other words, it does not pass the stringent
 validity test of model calibration. For this reason, we deem the model 
 *not trustworthy*. 
@@ -392,7 +389,7 @@ pars_list[[1]] <- pars_df %>% mutate(Case = "1",
 
 ## Case 2
 
-Since Case 1's setup do not yield satisfactory results, we consider
+Since Case 1's setup does not yield satisfactory results, we consider
 a more complex model. Specifically, $R(0)$ and $\rho$ are no longer assumed as
 unmodelled predictors, resulting in a four-unknowns model. We adopt the priors
 described in the main text. For $R(0)$, we choose a [weakly informative prior](https://github.com/stan-dev/stan/wiki/Prior-Choice-Recommendations).
@@ -421,7 +418,7 @@ kable(df, booktab = TRUE, escape = FALSE)
 ### Prior predictive checks
 
 Again, we check that our prior information captures the data (Figure 5). Based
-on the results below, we *accept the prior*, and proceed to fit the model.
+on the results below, we *accept the prior* and proceed to fit the model.
 
 ```{r case_2_prior_pred_checks}
 fldr      <- "./backup_objs/Synthetic_data/Case_2"
@@ -585,7 +582,7 @@ if(!file.exists(file_path)) {
 
 \hfill
 
-Stan informs that there are 47 divergent iterations, an indication of
+Stan informs that there are 98 divergent iterations, an indication of
 pathological behaviour that may lead to biased results.
 
 ```{r, message = TRUE}
@@ -619,7 +616,7 @@ mcmc_pairs(fit$draws(), np = np_cp, pars = pars_hat,
 \hfill
 
 Interestingly, at first sight (Figure 7),  chains appear to converge. There are
-no obvious trends and they seem to mix.
+no evident trends, and they seem to mix.
 
 ```{r, fig.cap = "Case 2.2. Trace plots", fig.height = 3.5}
 mcmc_trace(fit$draws(), pars_hat)
@@ -629,9 +626,11 @@ Upon further inspection (Figure 8), though, we identify the following issues in
 $\beta$'s chains:
 
 - *Chain 1*: Between samples 250 and 500, the chain is stuck,
-as it does not exhibit the expected random behaviour (jumping up and down). On the contrary, it stays in a similar location for several iterations.
+as it does not exhibit the expected random behaviour (jumping up and down). On 
+the contrary, it stays in a similar location for several iterations.
 
-- *Chain 2*: At the end of the sampling phase, the chain is stuck. The chain around that point (~1.3) stays for several iterations.
+- *Chain 2*: At the end of the sampling phase, the chain is stuck. The chain
+around that point (~1.3) stays for several iterations.
 
 
 ```{r, fig.height = 3.5, fig.cap = "Case 2.1. Beta's trace plots"}
@@ -655,7 +654,7 @@ ggplot(beta_draws, aes(x = id, y = value)) +
 We confirm these findings with $\widehat{R}$ and $ESS_{bulk}$. All of the 
 four parameters show $\widehat{R}$ values higher than the recommended threshold
 (1.01), indicating that convergence was not achieved. Likewise, only
-one $ESS_{bulk}$ is above the 400 threshold. Consequently, we deem the 
+one $ESS_{bulk}$ is above the threshold (400). Consequently, we deem the 
 computation as *not valid*.
 
 ```{r}
@@ -681,9 +680,9 @@ kable(smy_df, booktab = TRUE, escape = FALSE)
 
 According to the [Stan manual](https://mc-stan.org/misc/warnings.html), one 
 strategy to address divergent transitions is increasing the _adapt_delta_ 
-parameter. This is the target average proposal acceptance probability during
+parameter. It is the target average proposal acceptance probability during
 Stan’s adaptation period, and increasing it will force Stan to take smaller
-steps. We increase this parameter from its default value (0.8) to 0.99, and
+steps. We increase this parameter from its default value (0.8) to 0.99 and
 re-run the sampling process.
 
 ```{r, results = 'hide'}
@@ -717,11 +716,11 @@ if(!file.exists(file_path)) {
 \hfill
 
 By increasing _adapt_delta_, we eliminated the divergent transitions at the cost
-of hitting the maximum treedepth threshold, which unlike divergent transitions
-is not a validity concern but an efficiency indicator. Despite this indicator
-inform us about the complexity of the posterior explored, we could still use
-the samples for further analysis if the convergence and efficiency metrics are
-satisfactory.
+of hitting the maximum treedepth threshold. Unlike divergent transitions,
+this warning is not a validity concern but an efficiency indicator. Despite the
+fact that this indicator informs us about the complexity of the posterior 
+explored, we could still use the samples for further analysis if the convergence
+and efficiency metrics are satisfactory.
 
 
 ```{r, message = TRUE}
@@ -740,9 +739,9 @@ if(!file.exists(fileName)) {
 
 \hfill
 
-In this updated pairs-plot (Figure 9), we highlight the iterations where the 
-algorithm hit the maximum treedepth, that is, the maximum allowed number of 
-steps taken within an iteration. 
+This updated pairs-plot (Figure 9) highlights the iterations where the algorithm
+hit the maximum treedepth. That is, the maximum allowed number of steps taken 
+within an iteration. 
 
 ```{r, fig.cap = "Case 2.2. Pairs-plot"}
 np_cp <- nuts_params(fit)
@@ -755,7 +754,8 @@ mcmc_pairs(fit$draws(), np = np_cp, pars = pars_hat,
 
 \hfill
 
-Trace plots (Figure 10) do not reveal obvious issues in convergence and efficiency.
+Trace plots (Figure 10) do not reveal evident issues in convergence and 
+efficiency.
 
 ```{r, fig.cap = "Case 2.2. Trace plots", fig.height = 3.5}
 mcmc_trace(fit$draws(), pars_hat)
@@ -791,7 +791,7 @@ kable(smy_df, booktab = TRUE, escape = FALSE)
 ### Third calibration attempt
 
 To guarantee that the effective sample size is well above its acceptable 
-threshold, we increase the maximum number of steps allowed per iteration and we
+threshold, we increase the maximum number of steps allowed per iteration and
 double the number of samples in the _warm_up_ and _sampling_ phases.
 
 ```{r, results = 'hide'}
@@ -843,7 +843,7 @@ if(!file.exists(fileName)) {
 
 \hfill
 
-Trace plots (Figure 11) do not reveal obvious issues in convergence and 
+Trace plots (Figure 11) do not reveal evident issues in convergence and 
 efficiency.
 
 ```{r, fig.height = 3, fig.cap = "Case 2.3. Trace plots"}
@@ -937,10 +937,9 @@ mase_list[[2]] <- get_mase_fit(posterior_df, sim_inc$measured_inc) %>%
 ## Case 3
 
 Although Case 2 is computationally satisfactory, the uncertainty around the
-estimates could be improved if there were more data. Fortunately, a new 
-pre-print has just been published. This study reports that 30 % of the 
-population have antibodies against this virus. In light of this new data, we
-update the calibration setup.
+estimates could be improved with more data. Fortunately, a new preprint has just
+been published. This study reports that 30 % of the population has antibodies 
+against this virus. In light of this new data, we update the calibration setup.
 
 ### Priors
 
@@ -964,7 +963,7 @@ kable(df, booktab = TRUE, escape = FALSE)
 ### Prior predictive checks
 
 As in Cases 1 & 2, we check that our prior information captures the data. Based
-on the results (Figure 14), we *accept the prior*, and proceed to fit the model.
+on the results (Figure 14), we *accept the prior* and proceed to fit the model.
 
 ```{r case_3_prior_pred_checks}
 fldr      <- "./backup_objs/Synthetic_data/Case_3"
@@ -1079,7 +1078,7 @@ if(!file.exists(fileName)) {
 
 \hfill
 
-Trace plots (Figure 15) do not reveal obvious issues in convergence and 
+Trace plots (Figure 15) do not reveal evident issues in convergence and 
 efficiency.
 
 ```{r case_3_trace_plots, fig.cap = "Case 3. Trace plots", fig.height = 2.5}
@@ -1092,7 +1091,7 @@ mcmc_trace(fit$draws(), pars_hat)
 
 $\widehat{R}$ and $ESS_{bulk}$ are within the predetermined thresholds
 (< 1.01 and > 400, respectively). Based on all of these diagnostics,
-we *accept the computation* and move to the *posterior predictive checking *
+we *accept the computation* and move to the *posterior predictive checking*
 stage. 
 
 \hfill
@@ -1132,9 +1131,9 @@ plot_ts_fit(posterior_df, actual_df)
 ### Parameter estimations
 
 As with Case 2, we check for the correlations among parameters (Figure 17). Even
-though the correlation between $I(0)$ and $\beta$ slightly increased; 
-correlations between $\rho$ and $I(0)$, and $\rho$ and $\beta$ were
-significantly reduced in this revised setup.
+though the correlation between $I(0)$ and $\beta$ slightly increases,
+correlations between $\rho$-$I(0)$, and $\rho$-$\beta$ significantly decreases
+in this revised setup.
 
 
 ```{r case_3_distributions, fig.cap = "Case 3. Marginal and joint distributions"}
@@ -1181,11 +1180,11 @@ performance among the three cases.
 
 
 Similar to the example presented in the main text, we use the Mean Absolute 
-Scaled Error (MASE) as a measure of fit accuracy. The reader should recall that
+Scaled Error (MASE) to measure fit accuracy. The reader should recall that
 MASE < 1 indicates adequate performance, and lower values point to better fits.
-In Figure 18A, it is seen that unlike Cases 2 and 3, Case 1 does not explain the 
+In Figure 18a, it is seen that unlike Cases 2 and 3, Case 1 does not explain the 
 data adequately. Moreover, Cases 2 and 3 obtained similar performance scores
-(Figure 18B).
+(Figure 18b).
 
 ```{r, fig.height = 4, fig.width = 4, fig.cap = "MASE comparison"}
 all_MASE_df <- do.call("bind_rows", mase_list)
@@ -1214,8 +1213,8 @@ g1 / g2
 Lastly, in Figure 19, we present posterior marginal distributions compared 
 against the actual value (red dashed line). In Case 1, failing to explain the 
 data adequately leads to obtain unreliable estimates. Conversely, both Cases 2 &
-3 explains correctly the data and capture the actual values. However, they 
-differ in the degree of uncertainty.
+3 explain the data correctly and capture the values used to generate the 
+synthetic time series. However, they differ in the degree of uncertainty.
 
 
 ```{r, fig.cap = "Parameter estimates per case", fig.height = 3.5}
@@ -1239,11 +1238,11 @@ ggplot(tidy_all, aes(x = Case, y = value)) +
 
 # Random-Walk Metropolis fit
 
-We add this section to further corroborate that an SEIR with four unknown
-parameters is a  high-dimensional structure that generates a complex parameter
-space of difficult exploration. To demonstrate this complexity, we fit the
-aforementioned model to the synthetic incidence data using the Random-Walk
-Metropolis algorithm.
+We add this section to corroborate that an SEIR with four unknown
+parameters is a high-dimensional structure that generates a complex parameter
+space of difficult exploration. We fit the model mentioned above to the 
+synthetic incidence data using the Random-Walk Metropolis algorithm to 
+demonstrate such complexity.
 
 
 ```{r}
@@ -1343,10 +1342,9 @@ caption <- "Unknown parameters' trace plots constructed from the samples obtaine
 In Figure 20, it can be seen that after 10,000 burn-in iterations (the reader
 should recall that the trace plots presented below correspond to the samples
 generated in the *sampling phase*), the chains do not converge. On the one
-hand, one of the chains (Chain 1) is not stationary considering that it exhibits
-visible trends in parameters $I(0)$ (downwards) and $\beta$ (upwards). On the 
-other hand, all four chains describe different distributions. Namely, they do
-not mix.
+hand, the chains are not stationary considering they exhibit visible trends. On
+the other hand, all four chains describe different distributions. Namely, they
+do not mix.
 
 ```{r, fig.cap = caption}
 posterior_df <- do.call("bind_rows", result_obj$post_obj)
@@ -1359,9 +1357,10 @@ bayesplot::mcmc_trace(posterior_df)
 
 Considering that the sampling process does not converge, parameter estimates 
 from the samples cannot be trusted. However, for illustration purposes, we 
-compare such estimates with actual values (Figure 21). In this comparison, we 
-observe the unreliability of the estimated posterior distribution as not all 
-chains captured the desired values.
+compare such estimates with the parameter values used to generate the synthetic 
+data (Figure 21). In this comparison, we observe the unreliability of the
+estimated posterior distribution, considering that no chain captures the actual
+values.
 
 ```{r}
 caption <- "Marginal posterior distributions per chain obtained from fitting (via RWM) an SEIR model with four unknowns to incidence data"
@@ -1382,6 +1381,12 @@ ggplot(tidy_posterior, aes(x = Chain, y = value)) +
              colour = "red", linetype = "dashed") +
   labs(y = "Value") +
   theme_pubr()
+```
+
+# Original Computing Environment
+
+```{r}
+sessionInfo()
 ```
 
 

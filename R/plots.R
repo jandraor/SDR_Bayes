@@ -44,7 +44,7 @@ cor_fun <- function(data, mapping, method = "pearson", ndp = 2, sz=5,
     theme(panel.grid = element_blank())
 }
 
-pairs_posterior <- function(posterior, strip_text = 3) {
+pairs_posterior <- function(posterior, strip_text = 3, axis_text_size = 4) {
 
   if("I0" %in% colnames(posterior)) {
     posterior <- rename(posterior, `I(0)` = I0)
@@ -57,7 +57,7 @@ pairs_posterior <- function(posterior, strip_text = 3) {
   ggpairs(posterior, lower = list(continuous = dens_fn),
           upper = list(continuous = cor_fun), labeller = label_parsed) +
     theme_pubr() +
-    theme(axis.text = element_text(size = 4),
+    theme(axis.text = element_text(size = axis_text_size),
           strip.text = element_text(size = strip_text))
 }
 
