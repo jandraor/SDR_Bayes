@@ -9,9 +9,13 @@ urlcolor: blue
 bibliography: bibliography.bib
 ---
 
+\tableofcontents 
+
 ```{r setup, include=FALSE, message=FALSE, echo=FALSE}
 knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
 ```
+
+\newpage
 
 # Supporting tools
 
@@ -382,8 +386,15 @@ stan_model <- paste(
   "}",
   sep = "\n")
 
+stan_gc <- paste(
+  "generated quantities {",
+  "  real log_lik;",
+  "  log_lik = poisson_lpmf(y | x);",
+  "}",
+  sep = "\n")
+
 stan_text   <- paste(stan_fun, stan_data, stan_params,
-                       stan_tp, stan_model, sep = "\n")
+                       stan_tp, stan_model, stan_gc, sep = "\n")
 
 stan_fldr     <- "./Stan_files/example"
 dir.create(stan_fldr, showWarnings = FALSE, recursive = TRUE)  
@@ -742,9 +753,6 @@ ppc <- predictive_checks(n_sims, sens_o)
 ```
 
 ```{r}
-expected_value <- ppc %>% group_by(time) %>% 
-  summarise(y = mean(y))
-
 sample_traj <- sample.int(n_sims, 3) %>% sort()
 ppc_rest    <- ppc %>% filter(!iter %in% sample_traj)
 
@@ -754,17 +762,35 @@ ppc3        <- ppc %>% filter(iter == sample_traj[[3]])
 
 line_cols   <- viridisLite::viridis(3)
 
-g <- ggplot(ppc_rest, aes(x = time, y = y)) +
+g1 <- ggplot(ppc_rest, aes(x = time, y = y)) +
   geom_line(aes(group = iter), alpha = 0.01, colour = "grey50") +
   geom_point(data = flu_data, aes(x = time, y = y), size = 1,
             colour = "steelblue", alpha = 0.75) +
-  geom_line(data = expected_value, colour = "black", linetype = "dashed") +
   geom_line(data = ppc1, colour = line_cols[[1]], alpha = 0.9) +
   geom_line(data = ppc2, colour = line_cols[[2]], alpha = 0.9) +
   geom_line(data = ppc3, colour = line_cols[[3]], alpha = 0.9) +
   theme_pubclean() +
-  labs(y     = "Incidence [People / day]",
-       x     = "Days")
+  labs(y        = "Incidence [People / day]",
+       x        = "Days",
+       subtitle = "A)")
+
+summary_ppc <- ppc %>% group_by(time) %>% 
+  summarise(mean  = mean(y),
+            value = quantile(y, c(0.025, 0.975)),
+            bound = c("ll", "ul")) %>% pivot_wider(names_from = bound,
+                                                   values_from = value)
+
+g2 <- ggplot(summary_ppc, aes(x = time, y = mean)) +
+  geom_line(colour = "grey30", linetype = "dashed") +
+  geom_point(data = flu_data, aes(x = time, y = y), size = 1,
+             colour = "steelblue", alpha = 0.75)  +
+  geom_ribbon(aes(ymin = ll, ymax = ul), fill = "grey70", alpha = 0.5) +
+  theme_pubclean() +
+  labs(y        = "Incidence [People / day]",
+       x        = "Days",
+       subtitle = "B)")
+
+g <- g1 + g2
 
 print(g)
 ```
@@ -828,6 +854,170 @@ g2 <- ggplot(MASE_df, aes(x = MASE)) +
         axis.text.y = element_blank())
 
 print(g2)
+```
+
+# Point estimates vs neighbourhoods
+
+Throughout this work, we have intentionally focused on probability distributions
+rather than on point estimates. In this section, we provide the rationale for
+such a choice. The reader should recall that another approach to performing
+model calibration is via optimisation. That is, using non-linear optimisation
+routines, one finds the maximum or mode of a likelihood function $\pi(y|\theta)$,
+which is a point estimate. Around this estimate, we can construct confidence 
+intervals whose probability is defined in terms of coverage. For instance, a 95% 
+confidence interval means that 95 out of 100 intervals constructed from 100 
+measurements obtained from an identical process will capture the actual value. 
+In this context, a single measurement is the entire time series of case counts 
+reported in Cumberland.
+
+We plot the likelihood function for each parameter, where the dashed line
+denotes the mode or Maximum Likelihood Estimate (MLE). To construct this 
+function, we tap into the output returned by Stan. This software calculates the likelihood for each of the draws obtained from the _sampling_ phase.
+
+```{r}
+pars_df2 <- posterior_df[, c("beta", "rho", "I0", "log_lik")] %>% 
+  mutate(sample_id = row_number(),
+         is_mode = log_lik == max(log_lik))
+
+mode_df  <- pars_df2 %>% filter(is_mode == TRUE) %>% 
+  dplyr::select(-is_mode, - log_lik) %>% mutate(Point = "Mode")
+
+tidy_pars <- pars_df2 %>% 
+  select(-is_mode) %>% 
+  pivot_longer(c(-sample_id, -log_lik))
+
+plot_log_lik(tidy_pars, mode_df)
+```
+
+However, we ponder whether a point close to the MLE is less important than the 
+MLE itself. As an example, the MLE for $\beta$ is 1.28879**7**... (please note 
+that since this is a point estimate on the real line, after the last digit -7-, 
+there is an additional infinite number of digits). Does this imply that
+1.28879**8**... is less useful given that this other point estimate yields a 
+lower likelihood value? Certainly, this is a value judgement. To provide an 
+answer to these enquiries, we explore three point estimates: the previously 
+estimated mode, the mean of each marginal posterior, and a random point from the posterior distribution. We indicate these estimates as lines superimposed over
+the posterior distribution. 
+
+```{r}
+mean_df <- summarise_all(pars_df, mean) %>% 
+  mutate(Point = "Mean")
+
+set.seed(123)
+random_row   <- sample.int(nrow(pars_df), 1)
+random_point <- slice(pars_df, random_row) %>% 
+  mutate(Point = "Random")
+
+sim_points <- bind_rows(dplyr::select(mode_df, -sample_id) , 
+                        mean_df, random_point) %>% 
+  arrange(Point)
+
+
+plot_points_on_posterior(pars_df2, sim_points)
+```
+
+```{r, echo = FALSE}
+kable_df <- sim_points
+colnames(kable_df ) <- c("$\\beta$", "$\\rho$", "I(0)", "Estimate")
+knitr::kable(kable_df, "latex", booktabs = TRUE, escape = FALSE)
+```
+
+\hfill
+
+We use such point estimates to simulate the SD model and compare the results
+against the incidence data. It thus follows that _usefulness_ in this context is 
+defined as how accurately the simulated behaviour matches the observed data. To
+measure this accuracy, we employ three different metrics: the mean absolute
+scaled error (MASE), the Mean Square Error (MSE), and $R^2$. For the MASE and
+MSE, lower values indicate better performance. Conversely, high values of $R^2$
+indicate more accurate predictions. These metrics, though, tell a contradictory
+story. On the one hand, the mean produces the most precise estimate according to
+the MASE and the MSE. On the other hand, the random point results in the most 
+precise estimate according to $R^2$. Interestingly, the mode underperforms under
+the three metrics.
+
+On the contrary, from a **Bayesian** perspective, ascertaining which point
+estimate stands out above the others is uninteresting. The critical feature lies
+in their location. That is, they form a common neighbourhood, which we
+refer to as the posterior distribution $\pi(\theta|y)$. In this case, this
+distribution is continuous, so the probability of any given point is **zero**.
+Thus, from a Bayesian standpoint, we are interested in finding which regions
+(collections of points) within the parameter space are consistent with the data.
+This feature highlights a key difference between optimisation algorithms and
+MCMC methods: their **targets**. Whereas the former aims for the point of 
+highest density, the latter aims for concentration of probability mass, also
+known as the *typical set*. In lower dimensions, they tend to agree, but as the
+number of parameter increases, the difference becomes evident. Colloquially, 
+this is known as the *Curse of dimensionality*. To complement this argument, we
+refer the reader to Betancourt’s paper [@betancourt2017conceptual] and
+[Carpenter’s case study](https://mc-stan.org/users/documentation/case-studies/curse-dims.html) to build intuition about this complex issue. 
+
+
+Consequently, statistics such as means, medians, standard deviations, and 
+quantiles are merely used for descriptive purposes. Specifically, quantiles 
+describe where in the parameter space the collection of plausible point estimates concentrate. These quantiles known as *credible intervals* quantify the 
+uncertainty of the unobserved parameter values. For instance, a 95 % credible 
+interval implies that we _believe_ there is a 95% chance of finding the actual
+value within those bounds. Nevertheless, given that we have defined model 
+calibration as a Bayesian inference process, which quantifies inferences by an 
+entire distribution, no point estimate or interval characterises that
+distribution. 
+
+\hfill
+
+```{r}
+consts_df <- dplyr::select(sim_points, beta, rho) %>% 
+  rename(par_beta = beta)
+
+stocks_df <- dplyr::select(sim_points, I0) %>% 
+  rename(I = I0) %>% 
+  mutate(S = pop_size - I - R0,
+         R = R0,
+         C = I)
+
+sens_o <- sd_sensitivity_run(mdl$deSolve_components, start_time = 0, 
+                             stop_time = 91, timestep = 1 / 32,
+                             multicore = FALSE, integ_method = "rk4", 
+                             stocks_df = stocks_df,
+                             consts_df = consts_df)
+
+sim_df <- sens_o %>% filter(time - trunc(time) == 0) %>%
+  group_by(iter) %>% 
+  mutate(x = C - lag(C), 0) %>% filter(time > 0) %>% 
+  ungroup() %>% 
+  mutate(Point = case_when(
+    iter == 1 ~ "Mean",
+    iter == 2 ~ "Mode",
+    iter == 3 ~ "Random")) %>% 
+  select(Point, time, x) 
+
+ggplot(sim_df, aes(x = time, y = x)) +
+  geom_line(aes(group = Point, linetype = Point), alpha = 0.8,
+            colour = "steelblue") +
+  geom_point(data = flu_data, aes(y = y), size = 0.25) +
+  scale_linetype_manual(values = c("solid", "dashed", "dotted"),
+                        name = "Estimate") +
+  labs(y = "Reported incidence", x = "Days") +
+  theme_pubr() +
+  theme(axis.title = element_text(colour =  "grey50"),
+        axis.line = element_line(colour = "grey75"),
+        axis.text = element_text(colour =  "grey75"),
+        axis.ticks = element_line(colour = "grey75"))
+```
+
+```{r, echo = FALSE}
+df_list    <- split(sim_df, f = sim_df$Point)
+mases      <- sapply(df_list, function(df) mase(flu_data$y, df$x))
+mses       <- sapply(df_list, function(df) mse(flu_data$y, df$x))
+r_squareds <- sapply(df_list, function(df) cor(flu_data$y, df$x) ^ 2)
+
+kable_df <- data.frame(Estimate = sim_points$Point,
+                       MASE = mases, MSE = mses, `R^2` = r_squareds)
+
+colnames(kable_df) <- c("Estimate", "MASE", "MSE", "$R^2$")
+
+knitr::kable(kable_df, "latex", booktabs = TRUE, escape = FALSE,
+              row.names = FALSE)
 ```
 
 # Forecast

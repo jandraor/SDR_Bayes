@@ -1,0 +1,40 @@
+---
+output: github_document
+---
+
+# Andrade & Duggan (2021)
+
+This repository contains code for the paper:
+
+[Jair Andrade](https://www.linkedin.com/in/jandraor/) and 
+[Jim Duggan](https://ie.linkedin.com/in/jduggan). *A Bayesian approach to calibrate System Dynamics models using Hamiltonian Monte Carlo*
+
+The analysis in this study can be reproduced by executing the files:
+
+* **S1.rmd**
+* **S2.rmd**
+* **S3.rmd**
+
+## Abstract
+
+ Model calibration is an essential test that dynamic hypotheses must pass in 
+ order to serve as tools for decision-making. In short, it is the search for a 
+ match between actual and simulated behaviours using parameter inference. Here,
+ we approach such an inference process from a Bayesian perspective. Under this 
+ paradigm, we provide statements about the parameters (viewed as random 
+ variables) and data in probabilistic terms. These statements stem from a 
+ posterior distribution whose solution is often found via statistical 
+ simulation. However, the uptake of these methods within the SD field has been 
+ somewhat limited, and state-of-the-art algorithms have not been explored. 
+ Therefore, we introduce Hamiltonian Monte Carlo (HMC), an efficient algorithm 
+ that outperforms random-walk methods in exploring complex parameter spaces. We 
+ apply HMC to calibrate an SEIR model and frame the process within a practical 
+ workflow. In doing so, we also recommend visualisation tools that facilitate
+ the communication of results.
+  
+## Resources
+
+* [Duggan, J. (2016). *System Dynamics Modeling with R*. Springer.](https://www.springer.com/us/book/9783319340418)
+* [readsdr](https://github.com/jandraor/readsdr)
+
+

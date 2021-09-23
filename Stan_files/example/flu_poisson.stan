@@ -56,3 +56,7 @@ model {
   I0    ~ lognormal(0, 1);
   y     ~ poisson(x);
 }
+generated quantities {
+  real log_lik;
+  log_lik = poisson_lpmf(y | x);
+}

@@ -137,18 +137,9 @@ trace_plot <- function(fit, n_samples = 2000, subtitle = "") {
                            facet_args = list(labeller = label_parsed),
                            n_warmup = min(n_samples, 1000)) +
     labs(subtitle = subtitle) +
-    theme_minimal() +
+    theme_pubr() +
     theme(legend.position = "bottom")
 }
-
-# fit_plot <- function(summary_df, data_df) {
-#   ggplot(data_df, aes(x = time, y = y)) +
-#     geom_ribbon(data = summary_df, aes(ymin = lb, ymax = ub), fill = "grey90") +
-#     geom_line(data = summary_df, colour = "steelblue") +
-#     geom_point(aes(shape = data)) +
-#     facet_wrap(~data) +
-#     theme_pubclean()
-# }
 
 plot_ts_fit <- function(posterior_df, actual_data) {
 
@@ -209,4 +200,40 @@ plot_predictive_checks <- function(meas_df, flu_data, subtitle = ""){
     labs(y        = "Incidence [People / day]",
          x        = "Time [Days]",
          subtitle = subtitle)
+}
+
+plot_log_lik <- function(tidy_pars, mode_df) {
+  
+  tidy_mode <- mode_df %>% dplyr::select(-sample_id) %>% 
+    pivot_longer(c(-Point))
+  
+  ggplot(tidy_pars, aes(x = value, y = log_lik)) +
+    geom_point(alpha = 0.2, colour = "grey80") +
+    geom_vline(data = tidy_mode, aes(xintercept = value), linetype = "dashed",
+               alpha = 0.8, colour = "steelblue") +
+    facet_wrap(~name, scales = "free_x", labeller = label_parsed) +
+    theme_pubr() +
+    labs(x = "Parameter value", y = "Log lik",
+         subtitle = "Likelihood function")
+}
+
+plot_points_on_posterior <- function(pars_df2, sim_points) {
+  
+  tidy_pars <- pars_df2 %>% 
+    select(-is_mode, -log_lik) %>% 
+    pivot_longer(c(-sample_id))
+  
+  tidy_points <- sim_points %>% pivot_longer(-Point)
+  
+  ggplot(tidy_pars, aes(x = value)) +
+    facet_wrap(~name, scales = "free", labeller = label_parsed) +
+    geom_density(fill = "grey90", colour = "grey90") +
+    geom_vline(data = tidy_points, aes(xintercept = value, linetype = Point),
+               colour = "steelblue", alpha = 0.8) +
+    scale_linetype_manual(values = c("solid", "dashed", "dotted"),
+                          name = "Estimate") +
+    labs(x = "Parameter value", y = "Density") +
+    theme_pubr() +
+    theme(axis.ticks.y = element_blank(),
+          axis.text.y  = element_blank())
 }
